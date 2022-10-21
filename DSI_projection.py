@@ -11,8 +11,9 @@ from torch.utils.data import DataLoader
 from torch.utils.data import ConcatDataset
 from tqdm import tqdm
 from dataclasses import dataclass
-from T5_base_projection import T5Model_projection
-from T5_base_projection_decoder import T5decoder_projection
+# from T5_base_projection import T5Model_projection
+# from T5_base_projection_decoder import T5decoder_projection
+from T5Model import T5Model_projection
 import random
 import logging
 logger = logging.getLogger(__name__)
@@ -159,24 +160,25 @@ def train(args, model, train_dataloader,optimizer, length):
     tr_loss = 0
 
     device = torch.device('cuda')
+    loss_func  = torch.nn.CrossEntropyLoss()
 
     for i, inputs in enumerate(train_dataloader):
 
         inputs.to(device)
 
         decoder_input_ids = torch.zeros((inputs['input_ids'].shape[0],1))
-        
-#         import pdb; pdb.set_trace()
-        
-        outputs = model(input_ids=inputs['input_ids'].long(), decoder_input_ids=decoder_input_ids.long())
 
-        # import pdb; pdb.set_trace()
+        # decoder_input_ids = decoder_input_ids.to(device)
+        
+        # outputs = model(input_ids=inputs['input_ids'].long(), decoder_input_ids=decoder_input_ids.long())
                 
-        logits = outputs['last_hidden_state'].squeeze()
+        # logits = outputs['last_hidden_state'].squeeze()
+
+        logits = model(input_ids=inputs['input_ids'].long(), decoder_input_ids=decoder_input_ids.long()).squeeze()
 
         _, docids = torch.max(logits, 1)
         
-        loss = torch.nn.CrossEntropyLoss()(logits,torch.tensor(inputs['labels']).long())
+        loss = loss_func(logits,torch.tensor(inputs['labels']).long())
 
         correct_cnt = (docids == inputs['labels']).sum()
         
@@ -210,20 +212,24 @@ def validate(model, val_dataloader):
     hit_at_5 = 0
     val_loss = 0
 
+    device = torch.device('cuda')
+
 
     for i,inputs in tqdm(enumerate(val_dataloader), desc='Evaluating dev queries'):
                     
-        inputs.to(model.module.device)            
+        inputs.to(device)            
         
         with torch.no_grad():
                             
             decoder_input_ids = torch.zeros((inputs['input_ids'].shape[0],1))
+            decoder_input_ids = decoder_input_ids.to(device)
 
-            outputs = model(input_ids=inputs['input_ids'].long(), decoder_input_ids=decoder_input_ids.long())
+            # outputs = model(input_ids=inputs['input_ids'].long(), decoder_input_ids=decoder_input_ids.long())
 
-            logits = outputs['last_hidden_state'].squeeze()
+            # logits = outputs['last_hidden_state'].squeeze()
+
+            logits = model(input_ids=inputs['input_ids'].long(), decoder_input_ids=decoder_input_ids.long()).squeeze()
             
-#                 import pdb; pdb.set_trace()
 
             loss = torch.nn.CrossEntropyLoss()(logits,torch.tensor(inputs['labels']).long())
 
@@ -318,6 +324,8 @@ def main():
 
     logger.info(f'Class number {class_num}')
 
+    print('Loading model')
+
     model = T5Model_projection(class_num)
 
 
@@ -401,10 +409,11 @@ def main():
             scheduler.step()
             hit_at_1, hit_at_5, hit_at_10, mrr_at_10 = validate(model,val_dataloader)
 
-            logger.info(f'Evaluation Accuracy: {hit_at_1} / {val_length}')
-            logger.info(f'Evaluation Hits@10: {hit_at_10} / {val_length}')
-            logger.info(f'Evaluation Hits@5: {hit_at_5} / {val_length}')
-            logger.info(f'MRR@10: {mrr_at_10} / {val_length}')
+            logger.info(f'Epoch: {i+1}')
+            logger.info(f'Evaluation Accuracy: {hit_at_1} / {val_length} = {hit_at_1/val_length}')
+            logger.info(f'Evaluation Hits@5: {hit_at_5} / {val_length} = {hit_at_5/val_length}')
+            logger.info(f'Evaluation Hits@10: {hit_at_10} / {val_length} = {hit_at_10/val_length}')
+            logger.info(f'MRR@10: {mrr_at_10} / {val_length} = {mrr_at_10/val_length}')
 
             _save_checkpoint(args,model,i+1)
                                                
