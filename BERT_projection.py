@@ -1,9 +1,7 @@
-from os import device_encoding
-from sre_parse import Tokenizer
-from BERT_projectionmodel import QueryClassifier
 import datasets
 from torch.utils.data import Dataset
-from transformers import PreTrainedTokenizer, DataCollatorWithPadding,BertTokenizer
+from transformers import PreTrainedTokenizer, DataCollatorWithPadding
+from transformers import BertTokenizer
 import numpy as np
 import torch
 import wandb
@@ -11,8 +9,9 @@ from torch.utils.data import DataLoader
 from torch.utils.data import ConcatDataset
 from tqdm import tqdm
 from dataclasses import dataclass
-from T5_base_projection import T5Model_projection
-from T5_base_projection_decoder import T5decoder_projection
+# from T5_base_projection import T5Model_projection
+# from T5_base_projection_decoder import T5decoder_projection
+from BertModel import QueryClassifier
 import random
 import logging
 logger = logging.getLogger(__name__)
@@ -159,30 +158,30 @@ def train(args, model, train_dataloader,optimizer, length):
     tr_loss = 0
 
     device = torch.device('cuda')
+    loss_func  = torch.nn.CrossEntropyLoss()
 
     for i, inputs in enumerate(train_dataloader):
 
-        # import pdb; pdb.set_trace()
-        
-#         import pdb; pdb.set_trace()
-        
         inputs.to(device)
 
-        # batch = tuple(t.to(device) for t in batch)
+        decoder_input_ids = torch.zeros((inputs['input_ids'].shape[0],1))
 
-        # inputs = {"input_ids": batch[0].long(), "attention_mask": batch[1].long()}
+        # decoder_input_ids = decoder_input_ids.to(device)
         
-        logits = model.module(inputs['input_ids'].long(),inputs['attention_mask'].long())
-
-        # import pdb; pdb.set_trace()
+        # outputs = model(input_ids=inputs['input_ids'].long(), decoder_input_ids=decoder_input_ids.long())
                 
+        # logits = outputs['last_hidden_state'].squeeze()
+        
+        logits = model(inputs['input_ids'], inputs['attention_mask'])
+
         _, docids = torch.max(logits, 1)
         
-        loss = torch.nn.CrossEntropyLoss()(logits,torch.tensor(inputs['labels']).long())
+        loss = loss_func(logits,torch.tensor(inputs['labels']).long())
 
         correct_cnt = (docids == inputs['labels']).sum()
         
-        tr_loss += loss.item()        
+        tr_loss += loss.item()
+        
         total_correct_predictions += correct_cnt
 
         if (i + 1) % args.logging_step == 0:
@@ -214,17 +213,22 @@ def validate(model, val_dataloader):
     device = torch.device('cuda')
 
 
-
     for i,inputs in tqdm(enumerate(val_dataloader), desc='Evaluating dev queries'):
                     
         inputs.to(device)            
         
         with torch.no_grad():
-
-            # import pdb; pdb.set_trace()
                             
-            logits = model.module(inputs['input_ids'].long(),inputs['attention_mask'].long())
+            decoder_input_ids = torch.zeros((inputs['input_ids'].shape[0],1))
+            decoder_input_ids = decoder_input_ids.to(device)
+
+            # outputs = model(input_ids=inputs['input_ids'].long(), decoder_input_ids=decoder_input_ids.long())
+
+            # logits = outputs['last_hidden_state'].squeeze()
+
+            logits = model(inputs['input_ids'], inputs['attention_mask'])
             
+
             loss = torch.nn.CrossEntropyLoss()(logits,torch.tensor(inputs['labels']).long())
 
             val_loss += loss.item()
@@ -259,10 +263,18 @@ def _save_checkpoint(args, model, epoch) -> str:
     logger.info('Saved checkpoint at %s', cp)
     return cp
     
+def set_seed(seed=42):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+
 
 def main():
 
     args = get_arguments()
+
+    set_seed()
 
     if not os.path.exists(args.output_dir):
         os.mkdir(args.output_dir)
@@ -286,7 +298,7 @@ def main():
     cache_dir='cache'
     )['train']
 
-    print('TRAIN SET LOADED')
+    print('train set loaded')
 
     generated_queries = datasets.load_dataset(
         'json',
@@ -295,7 +307,7 @@ def main():
         cache_dir='cache'
     )['train']   
 
-    logger.info('PASSAGES LOADED')
+    logger.info('passages loaded')
 
     val_data = datasets.load_dataset(
     'json',
@@ -304,7 +316,7 @@ def main():
     cache_dir='cache'
     )['train']
 
-    logger.info('TEST SET LOADED')
+    logger.info('test set')
 
     length_queries = len(generated_queries)
     logger.info('length')
@@ -318,17 +330,17 @@ def main():
 
     logger.info(f'Class number {class_num}')
 
+    print('Loading model')
 
     model = QueryClassifier(class_num)
-    # model = T5Model_projection(class_num)
 
 
     ### Use pre_calculated weights to initialize the projection matrix
-    # if args.initialize:
-    #     # import pdb; pdb.set_trace()
-    #     embedding_matrix = joblib.load(args.embedding)
-    #     model.decoder.projection.weight.data=torch.from_numpy(embedding_matrix.to_numpy())      
-    #     logger.info("weights for projection layer loaded")
+    if args.initialize:
+        # import pdb; pdb.set_trace()
+        embedding_matrix = joblib.load(args.embedding)
+        model.decoder.projection.weight.data=torch.from_numpy(embedding_matrix.to_numpy())      
+        logger.info("weights for projection layer loaded")
 
 
     model = torch.nn.DataParallel(model)
@@ -403,10 +415,11 @@ def main():
             scheduler.step()
             hit_at_1, hit_at_5, hit_at_10, mrr_at_10 = validate(model,val_dataloader)
 
-            logger.info(f'Evaluation Accuracy: {hit_at_1} / {val_length}')
-            logger.info(f'Evaluation Hits@10: {hit_at_10} / {val_length}')
-            logger.info(f'Evaluation Hits@5: {hit_at_5} / {val_length}')
-            logger.info(f'MRR@10: {mrr_at_10} / {val_length}')
+            logger.info(f'Epoch: {i+1}')
+            logger.info(f'Evaluation Accuracy: {hit_at_1} / {val_length} = {hit_at_1/val_length}')
+            logger.info(f'Evaluation Hits@5: {hit_at_5} / {val_length} = {hit_at_5/val_length}')
+            logger.info(f'Evaluation Hits@10: {hit_at_10} / {val_length} = {hit_at_10/val_length}')
+            logger.info(f'MRR@10: {mrr_at_10} / {val_length} = {mrr_at_10/val_length}')
 
             _save_checkpoint(args,model,i+1)
                                                

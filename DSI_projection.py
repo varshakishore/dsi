@@ -1,5 +1,3 @@
-from os import device_encoding
-from sre_parse import Tokenizer
 import datasets
 from torch.utils.data import Dataset
 from transformers import PreTrainedTokenizer, DataCollatorWithPadding
