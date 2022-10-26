@@ -165,12 +165,6 @@ def train(args, model, train_dataloader,optimizer, length):
         inputs.to(device)
 
         decoder_input_ids = torch.zeros((inputs['input_ids'].shape[0],1))
-
-        # decoder_input_ids = decoder_input_ids.to(device)
-        
-        # outputs = model(input_ids=inputs['input_ids'].long(), decoder_input_ids=decoder_input_ids.long())
-                
-        # logits = outputs['last_hidden_state'].squeeze()
         
         logits = model(inputs['input_ids'], inputs['attention_mask'])
 
@@ -222,10 +216,6 @@ def validate(model, val_dataloader):
             decoder_input_ids = torch.zeros((inputs['input_ids'].shape[0],1))
             decoder_input_ids = decoder_input_ids.to(device)
 
-            # outputs = model(input_ids=inputs['input_ids'].long(), decoder_input_ids=decoder_input_ids.long())
-
-            # logits = outputs['last_hidden_state'].squeeze()
-
             logits = model(inputs['input_ids'], inputs['attention_mask'])
             
 
@@ -268,7 +258,6 @@ def set_seed(seed=42):
     np.random.seed(seed)
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
-
 
 def main():
 
