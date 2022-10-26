@@ -1,7 +1,7 @@
 import datasets
 from torch.utils.data import Dataset
 from transformers import PreTrainedTokenizer, DataCollatorWithPadding
-from transformers import BertTokenizer
+from transformers import T5Tokenizer, BertTokenizer
 import numpy as np
 import torch
 import wandb
@@ -11,6 +11,7 @@ from tqdm import tqdm
 from dataclasses import dataclass
 # from T5_base_projection import T5Model_projection
 # from T5_base_projection_decoder import T5decoder_projection
+from T5Model import T5Model_projection
 from BertModel import QueryClassifier
 import random
 import logging
@@ -46,7 +47,7 @@ class DSIqgTrainDataset(Dataset):
         return input_ids, data['doc_id']
     
 
-class passagesloader(Dataset):
+class GenPassageDataset(Dataset):
     def __init__(
             self,
             tokenizer: PreTrainedTokenizer,
@@ -88,6 +89,21 @@ def get_arguments():
         type=int,
         required=True,
         help="Number of train epochs",
+    )
+
+    parser.add_argument(
+        "--model_name",
+        default='T5-base',
+        choices=['T5-base', 'bert-base-uncased'],
+        help="Model name",
+    )
+
+    parser.add_argument(
+        "--seed",
+        default=42,
+        type=int,
+        required=False,
+        help="random seed",
     )
 
     parser.add_argument(
@@ -165,9 +181,11 @@ def train(args, model, train_dataloader,optimizer, length):
         inputs.to(device)
 
         decoder_input_ids = torch.zeros((inputs['input_ids'].shape[0],1))
-        
-        logits = model(inputs['input_ids'], inputs['attention_mask'])
 
+        if args.model_name == 'T5-base':
+            logits = model(input_ids=inputs['input_ids'].long(), decoder_input_ids=decoder_input_ids.long()).squeeze()
+        elif args.model_name == 'bert-base-uncased':
+            logits = model(inputs['input_ids'], inputs['attention_mask'])
         _, docids = torch.max(logits, 1)
         
         loss = loss_func(logits,torch.tensor(inputs['labels']).long())
@@ -194,7 +212,7 @@ def train(args, model, train_dataloader,optimizer, length):
     logger.info(f'Loss:{tr_loss/(i+1)}')
     return correct_ratio, tr_loss
 
-def validate(model, val_dataloader):
+def validate(args, model, val_dataloader):
 
     model.eval()
 
@@ -216,7 +234,10 @@ def validate(model, val_dataloader):
             decoder_input_ids = torch.zeros((inputs['input_ids'].shape[0],1))
             decoder_input_ids = decoder_input_ids.to(device)
 
-            logits = model(inputs['input_ids'], inputs['attention_mask'])
+            if args.model_name == 'T5-base':
+                logits = model(input_ids=inputs['input_ids'].long(), decoder_input_ids=decoder_input_ids.long()).squeeze()
+            elif args.model_name == 'bert-base-uncased':
+                logits = model(inputs['input_ids'], inputs['attention_mask'])
             
 
             loss = torch.nn.CrossEntropyLoss()(logits,torch.tensor(inputs['labels']).long())
@@ -253,7 +274,7 @@ def _save_checkpoint(args, model, epoch) -> str:
     logger.info('Saved checkpoint at %s', cp)
     return cp
     
-def set_seed(seed=42):
+def set_seed(seed):
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
@@ -263,7 +284,7 @@ def main():
 
     args = get_arguments()
 
-    set_seed()
+    set_seed(args.seed)
 
     if not os.path.exists(args.output_dir):
         os.mkdir(args.output_dir)
@@ -311,18 +332,18 @@ def main():
     logger.info('length')
     logger.info(length_queries)
 
-    tokenizer = BertTokenizer.from_pretrained('bert-base-uncased',cache_dir='cache')
-
-    gen_queries = passagesloader(tokenizer=tokenizer, datadict = generated_queries )
-
     class_num=int(length_queries/10)
 
     logger.info(f'Class number {class_num}')
 
-    print('Loading model')
+    logger.info(f'Loading Model and Tokenizer for {args.model_name}')
 
-    model = QueryClassifier(class_num)
-
+    if args.model_name == 'T5-base':
+        model = T5Model_projection(class_num)
+        tokenizer = T5Tokenizer.from_pretrained('t5-base',cache_dir='cache')
+    elif args.model_name == 'bert-base-uncased':
+        model = QueryClassifier(class_num)
+        tokenizer = BertTokenizer.from_pretrained('bert-base-uncased',cache_dir='cache')
 
     ### Use pre_calculated weights to initialize the projection matrix
     if args.initialize:
@@ -337,19 +358,9 @@ def main():
 
     logger.info('model loaded')
 
-    #### For reproducibility
-
-    # import random
-    # import transformers
-    # transformers.set_seed(12)
-    # torch.manual_seed(12)
-    # random.seed(12)
-
-    ######
-
     DSIQG_train = DSIqgTrainDataset(tokenizer=tokenizer, datadict = train_data)
     DSIQG_val = DSIqgTrainDataset(tokenizer=tokenizer, datadict = val_data)
-    gen_queries = passagesloader(tokenizer=tokenizer, datadict = generated_queries )
+    gen_queries = GenPassageDataset(tokenizer=tokenizer, datadict = generated_queries )
     Train_DSIQG = ConcatDataset([DSIQG_train, gen_queries])
     Val_DSIQG = DSIQG_val
 
@@ -395,14 +406,13 @@ def main():
         for i in range(args.train_epochs):
             logger.info(f"Epoch: {i+1}")
             print(f"Learning Rate: {scheduler.get_last_lr()}")
-            ###### TODO REMOVE HARDCODE
-            train(args,model, train_dataloader,optimizer,length)
+            train(args, model, train_dataloader, optimizer, length)
 
             # logger.info(f'Train Accuracy: {correct_ratio_train}')
             # logger.info(f'Train Loss: {tr_loss}')
 
             scheduler.step()
-            hit_at_1, hit_at_5, hit_at_10, mrr_at_10 = validate(model,val_dataloader)
+            hit_at_1, hit_at_5, hit_at_10, mrr_at_10 = validate(args, model, val_dataloader)
 
             logger.info(f'Epoch: {i+1}')
             logger.info(f'Evaluation Accuracy: {hit_at_1} / {val_length} = {hit_at_1/val_length}')
