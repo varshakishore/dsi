@@ -9,8 +9,6 @@ from torch.utils.data import DataLoader
 from torch.utils.data import ConcatDataset
 from tqdm import tqdm
 from dataclasses import dataclass
-# from T5_base_projection import T5Model_projection
-# from T5_base_projection_decoder import T5decoder_projection
 from T5Model import T5Model_projection
 from BertModel import QueryClassifier
 import random
@@ -19,6 +17,7 @@ logger = logging.getLogger(__name__)
 import argparse
 import os
 import joblib
+from utils import *
 
 
 class DSIqgTrainDataset(Dataset):
@@ -137,16 +136,29 @@ def get_arguments():
     )
 
     parser.add_argument(
-        "--initialize",
-        default=False,
-        type=bool,
-        help="whether or not to initialize the projection layer with pre-calculated embedding matrix",
+        "--initialize_embeddings",
+        default=None,
+        type=str,
+        help="file for the embedding matrix",
     )
 
     parser.add_argument(
-        "--embedding",
+        "--ance_embeddings",
+        action="store_true",
+        help="are these embeddings from ance",
+    )
+
+    parser.add_argument(
+        "--freeze_base_model",
+        action="store_true",
+        help="for freezing the parameters of the base model",
+    )
+
+    parser.add_argument(
+        "--initialize_model",
+        default=None,
         type=str,
-        help="file for the embedding matrix",
+        help="path to saved model",
     )
 
     args = parser.parse_args()
@@ -265,14 +277,6 @@ def validate(args, model, val_dataloader):
             
             
     return hit_at_1, hit_at_5, hit_at_10, mrr_at_10
-
-def _save_checkpoint(args, model, epoch) -> str:
-    cp = os.path.join(args.output_dir, 'projection_nq320k_epoch' + str(epoch))
-
-    torch.save(model.state_dict(), cp)
-
-    logger.info('Saved checkpoint at %s', cp)
-    return cp
     
 def set_seed(seed):
     random.seed(seed)
@@ -345,13 +349,29 @@ def main():
         model = QueryClassifier(class_num)
         tokenizer = BertTokenizer.from_pretrained('bert-base-uncased',cache_dir='cache')
 
+    # load saved model if initialize_model
+    # TODO extend for T5
+    if args.initialize_model:
+        load_saved_weights(model, args.initialize_model, strict_set=False)
+
+
     ### Use pre_calculated weights to initialize the projection matrix
-    if args.initialize:
-        # import pdb; pdb.set_trace()
-        embedding_matrix = joblib.load(args.embedding)
-        model.decoder.projection.weight.data=torch.from_numpy(embedding_matrix.to_numpy())      
+    if args.initialize_embeddings:
+        if args.ance_embeddings:
+            embedding_matrix = load_ance_embeddings(args.initialize_embeddings, 15000)
+            model.classifier.weight.data = torch.from_numpy(embedding_matrix)
+        else:
+            embedding_matrix = joblib.load(args.initialize_embeddings)
+            model.decoder.projection.weight.data=torch.from_numpy(embedding_matrix.to_numpy())      
         logger.info("weights for projection layer loaded")
 
+    # TODO check what the name in the T5 model is
+    if args.freeze_base_model:
+        for name, param in model.named_parameters():
+            if name !='classifier.weight':
+                param.requires_grad = False
+            else:
+                print("Unfrozen weight:", name)
 
     model = torch.nn.DataParallel(model)
     model.to(device)
@@ -399,7 +419,12 @@ def main():
 
     # global_step=0
     
+    hit_at_1, hit_at_5, hit_at_10, mrr_at_10 = validate(args, model, val_dataloader)
 
+    logger.info(f'Evaluation Accuracy: {hit_at_1} / {val_length} = {hit_at_1/val_length}')
+    logger.info(f'Evaluation Hits@5: {hit_at_5} / {val_length} = {hit_at_5/val_length}')
+    logger.info(f'Evaluation Hits@10: {hit_at_10} / {val_length} = {hit_at_10/val_length}')
+    logger.info(f'MRR@10: {mrr_at_10} / {val_length} = {mrr_at_10/val_length}')
 
 
     if not args.validate_only:
@@ -420,7 +445,8 @@ def main():
             logger.info(f'Evaluation Hits@10: {hit_at_10} / {val_length} = {hit_at_10/val_length}')
             logger.info(f'MRR@10: {mrr_at_10} / {val_length} = {mrr_at_10/val_length}')
 
-            _save_checkpoint(args,model,i+1)
+            cp = save_checkpoint(args,model,i+1)
+            logger.info('Saved checkpoint at %s', cp)
                                                
 
 if __name__ == "__main__":
