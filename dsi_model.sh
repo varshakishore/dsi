@@ -9,7 +9,7 @@ logging_step=20
 # embedding="/home/cw862/DSI/data/nq320k_passagesembedding_avg.pkl"
 
 train_cmd="
-python  DSI_projection.py \
+python  dsi_model.py \
 --batch_size=$batch_size  --output_dir=$output_dir --logging_step=$logging_step \
 --learning_rate $learning_rate  --train_epochs $train_epochs --model_name='bert-base-uncased' \
 "
