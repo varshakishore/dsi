@@ -76,17 +76,22 @@ def load_mapping(data_dir, out_name):
             offset2pid[int(line_arr[1])] = int(line_arr[0])
     return pid2offset, offset2pid
 
-def load_saved_weights(model, model_path, strict_set=False):
+def load_saved_weights(model, model_path, strict_set=False, load_classifier=True):
     state_dict = torch.load(model_path)
-    if len(state_dict.keys()) != 6:
+    if len(state_dict.keys()) != 6 and load_classifier:
         # model_to_load = get_model_obj(model)
         model = torch.nn.DataParallel(model)
-        # del state_dict['module.classifier.weight']
+        del state_dict['module.classifier.weight']
         model.load_state_dict(state_dict, strict=strict_set)
         model = model.module
         # TODO remove this temporary hack
-        # state_dict = torch.load(model_path)
-        # model.classifier.weight.data[:len(state_dict['module.classifier.weight'])] = state_dict['module.classifier.weight']
+        state_dict = torch.load(model_path)
+        model.classifier.weight.data[:len(state_dict['module.classifier.weight'])] = state_dict['module.classifier.weight']
+    elif len(state_dict.keys()) != 6 and not load_classifier:
+        model = torch.nn.DataParallel(model)
+        del state_dict['module.classifier.weight']
+        model.load_state_dict(state_dict, strict=strict_set)
+        model = model.module
     else:
         saved_state = CheckpointState(**state_dict)
         model_to_load = get_model_obj(model)

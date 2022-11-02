@@ -42,8 +42,10 @@ class QueryClassifier(nn.Module):
     def query_emb(self, input_ids, attention_mask):
         sequence_output, pooled_output, hidden_states = self.question_model(input_ids, attention_mask)
         return pooled_output
-    def forward(self, query_ids, attention_mask_q):
+    def forward(self, query_ids, attention_mask_q, return_hidden_emb=False):
         q_embs = self.query_emb(query_ids, attention_mask_q)
+        if return_hidden_emb:
+            return q_embs
         logits = self.classifier(q_embs)
         return logits
 
