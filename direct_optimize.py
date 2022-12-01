@@ -43,17 +43,18 @@ def addDocs(args, ax_params=None):
     timelist = []
     max_val =[]
     failed_docs = []
-
-    if ax_params:
-        lr = ax_params['lr']; lam = ax_params['lambda']; m1 = ax_params['m1']; m2 = ax_params['m2']
-    else:
-        lr = args.lr; lam = args.lam; m1 = args.m1; m2 = args.m2
     
     _, embeddings, embeddings_new, classifier_layer = initialize()
     if args.num_new_docs is None:
-        args.num_new_docs = len(embeddings_new)
+        num_new_docs = len(embeddings_new)
+
+    if ax_params:
+        lr = ax_params['lr']; lam = ax_params['lambda']; m1 = ax_params['m1']; m2 = ax_params['m2']
+        num_new_docs = 100
+    else:
+        lr = args.lr; lam = args.lam; m1 = args.m1; m2 = args.m2
     
-    for j in range(args.num_new_docs):
+    for j in range(num_new_docs):
         q = embeddings_new[j]
         if args.init == 'random':
             x = torch.nn.Linear(768, 1).weight.data.squeeze()
