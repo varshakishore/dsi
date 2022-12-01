@@ -110,16 +110,15 @@ def get_arguments():
     parser.add_argument("--lam", default=1, type=float, help="lambda for optimization")
     parser.add_argument("--m1", default=0.05, type=float, help="margin for constraint 1")
     parser.add_argument("--m2", default=0.0005, type=float, help="margin for constraint 2")
-    parser.add_argument("--init", default='random', type=str, help='way to initialize the classifier vector')
     parser.add_argument("--num_new_docs", default=None, type=int, help="number of new documents to add")
     parser.add_argument("--lbfgs_iterations", default=1000, type=int, help="number of iterations for lbfgs")
     parser.add_argument("--write_path", default=None, type=str, help="path to write classifier layer to")
     parser.add_argument("--tune_parameters", action="store_true", help="flag for tune parameters")
-    # parser.add_argument(
-    #     "--init", 
-    #     default='random', 
-    #     choices=['random', 'mean', 'max'], 
-    #     help='way to initialize the classifier vector')
+    parser.add_argument(
+        "--init", 
+        default='random', 
+        choices=['random', 'mean', 'max'], 
+        help='way to initialize the classifier vector')
     parser.add_argument(
         "--embeddings_path", 
         default='/home/vk352/dsi/outputs/dpr5_finetune_0.001_filtered_fixed/nq320k_gen_passage_embeddings.pkl', 
