@@ -44,7 +44,7 @@ def addDocs(args, ax_params=None):
     max_val =[]
     failed_docs = []
     
-    _, embeddings, embeddings_new, classifier_layer = initialize()
+    _, embeddings, embeddings_new, classifier_layer = initialize(args.embeddings_path, args.model_path)
     if args.num_new_docs is None:
         num_new_docs = len(embeddings_new)
 
@@ -99,7 +99,7 @@ def addDocs(args, ax_params=None):
                 timelist.append((time.time() - start)*1000)
             failed_docs.append(j)
 
-    if args.hyperparameter_tuning:
+    if ax_params:
         return np.asarray(timelist).mean()
         
     return failed_docs, classifier_layer, np.asarray(timelist).mean()
