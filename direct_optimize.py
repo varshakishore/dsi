@@ -47,6 +47,8 @@ def addDocs(args, ax_params=None):
     _, embeddings, embeddings_new, classifier_layer = initialize(args.embeddings_path, args.model_path)
     if args.num_new_docs is None:
         num_new_docs = len(embeddings_new)
+    else:
+        num_new_docs = args.num_new_docs
 
     if ax_params:
         lr = ax_params['lr']; lam = ax_params['lambda']; m1 = ax_params['m1']; m2 = ax_params['m2']
@@ -95,7 +97,7 @@ def addDocs(args, ax_params=None):
             classifier_layer = torch.cat((classifier_layer, x.unsqueeze(dim=0))).float()
             embeddings = torch.cat((embeddings, q.unsqueeze(dim=0)))
         else:
-            if args.hyperparameter_tuning:
+            if ax_params:
                 timelist.append((time.time() - start)*1000)
             failed_docs.append(j)
 
@@ -113,7 +115,7 @@ def get_arguments():
     parser.add_argument("--m2", default=0.0005, type=float, help="margin for constraint 2")
     parser.add_argument("--num_new_docs", default=None, type=int, help="number of new documents to add")
     parser.add_argument("--lbfgs_iterations", default=1000, type=int, help="number of iterations for lbfgs")
-    parser.add_argument("--write_path", default=None, type=str, help="path to write classifier layer to")
+    parser.add_argument("--write_path_dir", default=None, type=str, help="path to write classifier layer to")
     parser.add_argument("--tune_parameters", action="store_true", help="flag for tune parameters")
     parser.add_argument(
         "--init", 
@@ -141,6 +143,7 @@ def main():
     args = get_arguments()
 
     if args.tune_parameters:
+        print("Tuning parameters")
         failed_docs, classifier_layer, avg_time = addDocs(args)
 
         # ax optimize
@@ -156,6 +159,12 @@ def main():
         minimize=True,
         )
 
+        print(f'best_parameters')
+        print(f'lr: {best_parameters["lr"]}')
+        print(f'lambda: {best_parameters["lambda"]}')
+        print(f'm1: {best_parameters["m1"]}')
+        print(f'm2: {best_parameters["m2"]}')
+
         args.lr = best_parameters['lr']
         args.lam = best_parameters['lambda']
         args.m1 = best_parameters['m1']
@@ -164,8 +173,16 @@ def main():
     print("Adding documents")
     failed_docs, classifier_layer, avg_time = addDocs(args)
 
-    if args.write_path is not None:
-        joblib.dump(classifier_layer, args.write_path)
+    if args.write_path_dir is not None:
+        print("Writing to directory: ", args.write_path_dir)
+        os.makedirs(args.write_path_dir, exist_ok=True)
+        joblib.dump(classifier_layer, os.path.join(args.write_path_dir, 'classifier_layer.pkl'))
+        joblib.dump(failed_docs, os.path.join(args.write_path_dir, 'failed_docs.pkl'))
+        with open(os.path.join(args.write_path_dir, 'best_parameters.txt'), 'w') as f:
+            f.write(f'lr: {args.lr}\n')
+            f.write(f'lambda: {args.lam}\n')
+            f.write(f'm1: {args.m1}\n')
+            f.write(f'm2: {args.m2}\n')
 
 if __name__ == "__main__":
     main()
