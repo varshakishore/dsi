@@ -65,8 +65,7 @@ def addDocs(args, ax_params=None):
         elif args.init == 'mean':
             x = torch.mean(classifier_layer,0).clone().detach()
         elif args.init == 'max':
-            x = classifier_layer[torch.argmax(torch.matmul(classifier_layer, q)).item()].clone().detach()        
-        x = x.to('cuda')
+            x = classifier_layer[torch.argmax(torch.matmul(classifier_layer, q.to('cuda'))).item()].clone().detach()        
         x.requires_grad = True
         optimizer = SGD([x], lr=lr)
         embeddings = embeddings.to('cuda')
