@@ -33,8 +33,8 @@ def initialize(embeddings_path,
         embeddings = sentence_embeddings[:1000010][::10]
         embeddings_new = sentence_embeddings[1000010:][::10]
     else:
-        embeddings = sentence_embeddings[:1000010]
-        embeddings_new = sentence_embeddings[1000010:]
+        embeddings = sentence_embeddings[:1000010][::10]
+        embeddings_new = sentence_embeddings[1000010:][::2]
     
     return sentence_embeddings, embeddings, embeddings_new, classifier_layer
 
@@ -45,7 +45,7 @@ def addDocs(args, ax_params=None):
     max_val =[]
     failed_docs = []
     
-    _, embeddings, embeddings_new, classifier_layer = initialize(args.embeddings_path, args.model_path)
+    _, embeddings, embeddings_new, classifier_layer = initialize(args.embeddings_path, args.model_path, single_embedding=(not args.multiple_queries))
     if args.num_new_docs is None:
         num_new_docs = len(embeddings_new)
     else:
@@ -73,15 +73,27 @@ def addDocs(args, ax_params=None):
         classifier_layer = classifier_layer.to('cuda')
         q = q.to('cuda')
         max_val = torch.max(torch.matmul(classifier_layer, q))
+
+        if args.multiple_queries:
+            qs = embeddings_new[j:j+5]
+            qs = qs.to('cuda')
+            max_vals = [torch.max(torch.matmul(classifier_layer, qs[k])) for k in range(5)]
     #     print("max val: ", max_val)
         
         start = time.time()
         for i in range(args.lbfgs_iterations):
             x.requires_grad = True
             def closure():
-                loss = lam * max(0, (max_val.item()+m1) - (q.unsqueeze(dim=0) @ x).squeeze())
-                prod = ((x-classifier_layer) * embeddings).sum(1) + m2
-                loss += torch.maximum(prod, torch.zeros(len(prod)).to('cuda')).sum()
+                if args.multiple_queries:
+                    loss = 0
+                    for k in range(5):
+                        loss += lam * max(0, (max_vals[k].item()+m1) - (qs[k].unsqueeze(dim=0) @ x).squeeze())
+                        prod = ((x-classifier_layer) * embeddings).sum(1) + m2
+                        loss += torch.maximum(prod, torch.zeros(len(prod)).to('cuda')).sum()
+                else:
+                    loss = lam * max(0, (max_val.item()+m1) - (q.unsqueeze(dim=0) @ x).squeeze())
+                    prod = ((x-classifier_layer) * embeddings).sum(1) + m2
+                    loss += torch.maximum(prod, torch.zeros(len(prod)).to('cuda')).sum()
 
                 optimizer.zero_grad()
                 loss.backward()
@@ -97,7 +109,11 @@ def addDocs(args, ax_params=None):
                 
             # add to classifier_layer and embeddings
             classifier_layer = torch.cat((classifier_layer, x.unsqueeze(dim=0))).float()
-            embeddings = torch.cat((embeddings, q.unsqueeze(dim=0)))
+            if args.multiple_queries:
+                idx2add = torch.argmax(torch.matmul(qs, x.unsqueeze(dim=1)))
+                embeddings = torch.cat((embeddings, qs[idx2add].unsqueeze(dim=0)))
+            else:
+                embeddings = torch.cat((embeddings, q.unsqueeze(dim=0)))
         else:
             if ax_params:
                 timelist.append((time.time() - start)*1000)
@@ -119,6 +135,7 @@ def get_arguments():
     parser.add_argument("--lbfgs_iterations", default=1000, type=int, help="number of iterations for lbfgs")
     parser.add_argument("--write_path_dir", default=None, type=str, help="path to write classifier layer to")
     parser.add_argument("--tune_parameters", action="store_true", help="flag for tune parameters")
+    parser.add_argument("--multiple_queries", action="store_true", help="flag for multiple_queries")
     parser.add_argument(
         "--init", 
         default='random', 
@@ -157,6 +174,7 @@ def main():
         ],
         evaluation_function=partial(addDocs, args),
         objective_name='time',
+        total_trials=30,
         minimize=True,
         )
 
