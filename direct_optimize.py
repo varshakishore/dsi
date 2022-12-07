@@ -14,6 +14,7 @@ from ax.plot.contour import plot_contour
 from ax.plot.trace import optimization_trace_single_method
 from ax.service.managed_loop import optimize
 from ax.utils.notebook.plotting import render, init_notebook_plotting
+from ax.service.utils.report_utils import exp_to_df
 
 def set_seed(seed=123):
     torch.manual_seed(seed)
@@ -144,7 +145,6 @@ def main():
 
     if args.tune_parameters:
         print("Tuning parameters")
-        failed_docs, classifier_layer, avg_time = addDocs(args)
 
         # ax optimize
         best_parameters, values, experiment, model = optimize(
@@ -158,6 +158,8 @@ def main():
         objective_name='time',
         minimize=True,
         )
+
+        print(exp_to_df(experiment)) 
 
         print(f'best_parameters')
         print(f'lr: {best_parameters["lr"]}')
@@ -183,6 +185,8 @@ def main():
             f.write(f'lambda: {args.lam}\n')
             f.write(f'm1: {args.m1}\n')
             f.write(f'm2: {args.m2}\n')
+            print('\n')
+            f.write(f'experiment: {exp_to_df(experiment).to_csv()}\n')
 
 if __name__ == "__main__":
     main()
