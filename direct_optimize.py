@@ -23,6 +23,7 @@ def set_seed(seed=123):
 def initialize(embeddings_path, 
                 model_path,
                 single_embedding=True):
+    set_seed()            
     sentence_embeddings = joblib.load(embeddings_path)
     class_num = 100001
     model = QueryClassifier(class_num)
