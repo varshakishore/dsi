@@ -51,6 +51,8 @@ def addDocs(args, ax_params=None):
     else:
         num_new_docs = args.num_new_docs
 
+    print(f'adding {num_new_docs} new documents.')
+
     if ax_params:
         lr = ax_params['lr']; lam = ax_params['lambda']; m1 = ax_params['m1']; m2 = ax_params['m2']
         num_new_docs = 100
@@ -64,8 +66,7 @@ def addDocs(args, ax_params=None):
         elif args.init == 'mean':
             x = torch.mean(classifier_layer,0).clone().detach()
         elif args.init == 'max':
-            x = classifier_layer[torch.argmax(torch.matmul(classifier_layer, q)).item()].clone().detach()        
-        x = x.to('cuda')
+            x = classifier_layer[torch.argmax(torch.matmul(classifier_layer, q.to('cuda'))).item()].clone().detach()        
         x.requires_grad = True
         optimizer = SGD([x], lr=lr)
         embeddings = embeddings.to('cuda')
@@ -88,7 +89,7 @@ def addDocs(args, ax_params=None):
 
             loss = optimizer.step(closure)
             if loss == 0: break
-        if j % 100 == 0:
+        if (j+1) % 100 == 0:
             print(f'Done {j} in {time.time() - start} seconds; loss={loss}')
             
         if loss==0:
@@ -171,6 +172,8 @@ def main():
         args.lam = best_parameters['lambda']
         args.m1 = best_parameters['m1']
         args.m2 = best_parameters['m2']
+        ### TODO remove the hardcoding
+        args.num_new_docs = 9714
     
     print("Adding documents")
     failed_docs, classifier_layer, avg_time = addDocs(args)
