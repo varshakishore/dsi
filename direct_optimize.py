@@ -83,6 +83,7 @@ def addDocs(args, ax_params=None):
         
         start = time.time()
         for i in range(args.lbfgs_iterations):
+            import pdb; pdb.set_trace()
             x.requires_grad = True
             def closure():
                 if args.multiple_queries:
@@ -132,6 +133,7 @@ def addDocs(args, ax_params=None):
 def get_arguments():
     parser = argparse.ArgumentParser()
 
+    parser.add_argument("--single_embedding", action="store_true", help="if we are use single generated query to documents")
     parser.add_argument("--lr", default=0.01, type=float, help="initial learning rate for optimization")
     parser.add_argument("--lam", default=1, type=float, help="lambda for optimization")
     parser.add_argument("--m1", default=0.05, type=float, help="margin for constraint 1")
@@ -184,7 +186,6 @@ def main():
         )
 
         print(exp_to_df(experiment)) 
-
         print(f'best_parameters')
         print(f'lr: {best_parameters["lr"]}')
         print(f'lambda: {best_parameters["lambda"]}')
