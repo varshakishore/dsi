@@ -22,15 +22,15 @@ def set_seed(seed=123):
 
 def initialize(embeddings_path, 
                 model_path,
-                single_embedding=True):
-    set_seed()            
+                multiple_queries=False):
+    set_seed()
     sentence_embeddings = joblib.load(embeddings_path)
     class_num = 100001
     model = QueryClassifier(class_num)
     load_saved_weights(model, model_path, strict_set=False)
     classifier_layer = model.classifier.weight.data
 
-    if single_embedding:
+    if not multiple_queries:
         embeddings = sentence_embeddings[:1000010][::10]
         embeddings_new = sentence_embeddings[1000010:][::10]
     else:
@@ -46,13 +46,11 @@ def addDocs(args, ax_params=None):
     max_val =[]
     failed_docs = []
     
-    _, embeddings, embeddings_new, classifier_layer = initialize(args.embeddings_path, args.model_path, single_embedding=(not args.multiple_queries))
+    _, embeddings, embeddings_new, classifier_layer = initialize(args.embeddings_path, args.model_path, args.multiple_queries)
     if args.num_new_docs is None:
         num_new_docs = len(embeddings_new)
     else:
         num_new_docs = args.num_new_docs
-
-    print(f'adding {num_new_docs} new documents.')
 
     if ax_params:
         lr = ax_params['lr']; lam = ax_params['lambda']; m1 = ax_params['m1']; m2 = ax_params['m2']
@@ -60,26 +58,28 @@ def addDocs(args, ax_params=None):
     else:
         lr = args.lr; lam = args.lam; m1 = args.m1; m2 = args.m2
     
-    for j in range(num_new_docs):
+    j = 0
+    while(j<num_new_docs):
+    # for j in range(num_new_docs):
         q = embeddings_new[j]
         if args.init == 'random':
             x = torch.nn.Linear(768, 1).weight.data.squeeze()
         elif args.init == 'mean':
             x = torch.mean(classifier_layer,0).clone().detach()
         elif args.init == 'max':
-            x = classifier_layer[torch.argmax(torch.matmul(classifier_layer, q.to('cuda'))).item()].clone().detach()        
+            x = classifier_layer[torch.argmax(torch.matmul(classifier_layer, q)).item()].clone().detach()        
+        x = x.to('cuda')
         x.requires_grad = True
         optimizer = SGD([x], lr=lr)
         embeddings = embeddings.to('cuda')
         classifier_layer = classifier_layer.to('cuda')
         q = q.to('cuda')
         max_val = torch.max(torch.matmul(classifier_layer, q))
-
         if args.multiple_queries:
             qs = embeddings_new[j:j+5]
             qs = qs.to('cuda')
             max_vals = [torch.max(torch.matmul(classifier_layer, qs[k])) for k in range(5)]
-    #     print("max val: ", max_val)
+
         
         start = time.time()
         for i in range(args.lbfgs_iterations):
@@ -102,7 +102,7 @@ def addDocs(args, ax_params=None):
 
             loss = optimizer.step(closure)
             if loss == 0: break
-        if (j+1) % 100 == 0:
+        if j % 100 == 0:
             print(f'Done {j} in {time.time() - start} seconds; loss={loss}')
             
         if loss==0:
@@ -119,6 +119,10 @@ def addDocs(args, ax_params=None):
             if ax_params:
                 timelist.append((time.time() - start)*1000)
             failed_docs.append(j)
+        if args.multiple_queries:
+            j += 5
+        else:
+            j += 1
 
     if ax_params:
         return np.asarray(timelist).mean()
@@ -191,8 +195,6 @@ def main():
         args.lam = best_parameters['lambda']
         args.m1 = best_parameters['m1']
         args.m2 = best_parameters['m2']
-        ### TODO remove the hardcoding
-        args.num_new_docs = 9714
     
     print("Adding documents")
     failed_docs, classifier_layer, avg_time = addDocs(args)
