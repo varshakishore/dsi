@@ -83,7 +83,6 @@ def addDocs(args, ax_params=None):
         
         start = time.time()
         for i in range(args.lbfgs_iterations):
-            import pdb; pdb.set_trace()
             x.requires_grad = True
             def closure():
                 if args.multiple_queries:
@@ -128,7 +127,7 @@ def addDocs(args, ax_params=None):
     if ax_params:
         return np.asarray(timelist).mean()
         
-    return failed_docs, classifier_layer, np.asarray(timelist).mean()
+    return failed_docs, classifier_layer, embeddings, np.asarray(timelist).mean(), timelist
 
 def get_arguments():
     parser = argparse.ArgumentParser()
@@ -196,15 +195,10 @@ def main():
         args.lam = best_parameters['lambda']
         args.m1 = best_parameters['m1']
         args.m2 = best_parameters['m2']
-    
-    print("Adding documents")
-    failed_docs, classifier_layer, avg_time = addDocs(args)
 
     if args.write_path_dir is not None:
         print("Writing to directory: ", args.write_path_dir)
         os.makedirs(args.write_path_dir, exist_ok=True)
-        joblib.dump(classifier_layer, os.path.join(args.write_path_dir, 'classifier_layer.pkl'))
-        joblib.dump(failed_docs, os.path.join(args.write_path_dir, 'failed_docs.pkl'))
         with open(os.path.join(args.write_path_dir, 'best_parameters.txt'), 'w') as f:
             f.write(f'lr: {args.lr}\n')
             f.write(f'lambda: {args.lam}\n')
@@ -212,6 +206,17 @@ def main():
             f.write(f'm2: {args.m2}\n')
             print('\n')
             f.write(f'experiment: {exp_to_df(experiment).to_csv()}\n')
+    
+    print("Adding documents")
+    failed_docs, classifier_layer, embeddings, avg_time, timelist = addDocs(args)
+
+    if args.write_path_dir is not None:
+        print("Writing to directory: ", args.write_path_dir)
+        os.makedirs(args.write_path_dir, exist_ok=True)
+        joblib.dump(classifier_layer, os.path.join(args.write_path_dir, 'classifier_layer.pkl'))
+        joblib.dump(embeddings, os.path.join(args.write_path_dir, 'embeddings.pkl'))
+        joblib.dump(failed_docs, os.path.join(args.write_path_dir, 'failed_docs.pkl'))
+        joblib.dump(timelist, os.path.join(args.write_path_dir, 'timelist.pkl'))
 
 if __name__ == "__main__":
     main()
