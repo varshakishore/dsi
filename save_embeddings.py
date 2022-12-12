@@ -6,6 +6,7 @@ from typing import Optional, Tuple, Union
 from transformers.modeling_outputs import BaseModelOutput, Seq2SeqModelOutput
 from T5Model import T5Model_projection
 from BertModel import QueryClassifier
+from dsi_model import DSIqgTrainDataset, GenPassageDataset 
 from transformers import DataCollatorWithPadding
 from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm
@@ -49,36 +50,16 @@ def get_arguments():
         help="The dir. for log files",
     )
 
+    parser.add_argument(
+        "--split",
+        default = 'gen',
+        choices=['train','val','gen'],
+        help="which split to save"
+    )
+
     args = parser.parse_args()
 
     return args
-
-
-
-class passagesloader(Dataset):
-    def __init__(
-            self,
-            tokenizer,
-            datadict):
-        super().__init__()
-        self.train_data = datadict
-        
-        self.tokenizer = tokenizer
-        self.total_len = len(self.train_data)
-
-
-    def __len__(self):
-        return self.total_len
-
-    def __getitem__(self, idx):
-        data = self.train_data[idx]
-
-        input_ids = self.tokenizer(data['gen_question'],
-                                   return_tensors="pt",
-                                   truncation="only_first",
-                                  max_length=32).input_ids[0]
-        
-        return input_ids, data['doc_id']
 
 class IndexingCollator(DataCollatorWithPadding):
     def __call__(self, features):
@@ -142,14 +123,10 @@ def main():
 
     args = get_arguments()
 
-    generated_queries = datasets.load_dataset(
-    'json',
-    data_files='/home/vk352/ANCE/NQ320k_dataset_v2/passages.json',
-    ignore_verifications=False,
-    cache_dir='cache'
-    )['train'] 
+    ### HARDCODING 
+    ### use the same number of class no matter which split to load
+    class_num = 109715
 
-    class_num=int(len(generated_queries)/10)
 
     if args.model_name == 'T5-base':
         model = T5Model_projection(class_num)
@@ -157,6 +134,49 @@ def main():
     elif args.model_name == 'bert-base-uncased':
         model = QueryClassifier(class_num)
         tokenizer = BertTokenizer.from_pretrained('bert-base-uncased',cache_dir='cache')
+
+
+    if args.split == 'gen':
+        generated_queries = datasets.load_dataset(
+        'json',
+        data_files='/home/vk352/ANCE/NQ320k_dataset_v2/passages.json',
+        ignore_verifications=False,
+        cache_dir='cache'
+        )['train'] 
+
+        queries = GenPassageDataset(tokenizer=tokenizer, datadict = generated_queries)
+
+
+    elif args.split == 'train':
+        queries = datasets.load_dataset(
+        'json',
+        data_files='/home/vk352/ANCE/NQ320k_dataset_v2/trainqueries_extended.json',
+        ignore_verifications=False,
+        cache_dir='cache'
+        )['train']
+
+        queries = DSIqgTrainDataset(tokenizer=tokenizer, datadict = queries)
+
+
+    elif args.split == 'val':
+        queries = datasets.load_dataset(
+        'json',
+        data_files='/home/vk352/ANCE/NQ320k_dataset_v2/testqueries.json',
+        ignore_verifications=False,
+        cache_dir='cache'
+        )['train']
+        
+        queries = DSIqgTrainDataset(tokenizer=tokenizer, datadict = queries)
+        
+
+    dataloader = DataLoader(queries, 
+                            batch_size=3500,
+                            collate_fn=IndexingCollator(
+                            tokenizer,
+                            padding='longest'),
+                            shuffle=False,
+                            drop_last=False)
+
 
     # load saved model if initialize_model
     # TODO extend for T5
@@ -166,18 +186,7 @@ def main():
     model = torch.nn.DataParallel(model)
     model.to(device)
 
-
-    gen_queries = passagesloader(tokenizer=tokenizer, datadict = generated_queries )
-
-    dataloader = DataLoader(gen_queries, 
-                                batch_size=3500,
-                                collate_fn=IndexingCollator(
-                                tokenizer,
-                                padding='longest'),
-                                shuffle=False,
-                                drop_last=False)
-
-    embedding_matrix, labels = save(args, model, dataloader, 3500, len(generated_queries))
+    embedding_matrix, labels = save(args, model, dataloader, 3500, len(queries))
 
     if args.save_average:
         embedding_matrix_pd = pd.DataFrame(embedding_matrix)
@@ -193,16 +202,24 @@ def main():
         print('embedding file written.')
 
     else:
-        # check if order of samples is 0,0,0,0,0,0,0,0,0,0,1,1,...,109715,109715
-        (labels.numpy() == [x for x in range(109715) for y in range(10)]).all()
+        if args.split == 'gen':
 
-        import pdb; pdb.set_trace()
-        joblib.dump(embedding_matrix, args.output_dir)
+        # check if order of samples is 0,0,0,0,0,0,0,0,0,0,1,1,...,109715,109715
+            (labels.numpy() == [x for x in range(109715) for y in range(10)]).all()
+
+            import pdb; pdb.set_trace()
+            joblib.dump(embedding_matrix, args.output_dir)
         # with open(args.output_dir, 'wb') as f:
         #     pkl.dump(embedding_matrix, f)
 
-        print('embedding file written.')
+            print('embedding file written.')
 
+        else:
+
+            embedding_matrix_pd = pd.DataFrame(embedding_matrix)
+            embedding_matrix_pd.insert(0, "doc_ids", labels)
+            embedding_matrix_st = embedding_matrix_pd.groupby('doc_ids').apply(lambda x:x)\
+            joblib.dump(embedding_matrix_st, os.path.join(args.output_dir, f'{split}_embeds.pkl'))
 
 
 if __name__ == "__main__":
