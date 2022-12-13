@@ -54,31 +54,37 @@ def addDocs(args, ax_params=None):
 
     if ax_params:
         lr = ax_params['lr']; lam = ax_params['lambda']; m1 = ax_params['m1']; m2 = ax_params['m2']
-        num_new_docs = 100
+        num_new_docs = 500
     else:
         lr = args.lr; lam = args.lam; m1 = args.m1; m2 = args.m2
-    
-    j = 0
-    while(j<num_new_docs):
+
+    added_counter = len(classifier_layer)
+
+    # add rows for the new docs
+    classifier_layer = torch.cat((classifier_layer, torch.zeros(num_new_docs, len(classifier_layer[0])).cuda()))
+    embeddings = torch.cat((embeddings, torch.zeros(num_new_docs, len(classifier_layer[0]))))
+
+    step = args.num_qs if args.multiple_queries else 1
+    for j in tqdm(range(0, num_new_docs, step)):
     # for j in range(num_new_docs):
         q = embeddings_new[j]
         if args.init == 'random':
             x = torch.nn.Linear(768, 1).weight.data.squeeze()
         elif args.init == 'mean':
-            x = torch.mean(classifier_layer,0).clone().detach()
+            x = torch.mean(classifier_layer[:added_counter],0).clone().detach()
         elif args.init == 'max':
-            x = classifier_layer[torch.argmax(torch.matmul(classifier_layer, q)).item()].clone().detach()        
+            x = classifier_layer[torch.argmax(torch.matmul(classifier_layer[:added_counter], q.to('cuda'))).item()].clone().detach()        
         x = x.to('cuda')
         x.requires_grad = True
         optimizer = SGD([x], lr=lr)
         embeddings = embeddings.to('cuda')
         classifier_layer = classifier_layer.to('cuda')
         q = q.to('cuda')
-        max_val = torch.max(torch.matmul(classifier_layer, q))
+        max_val = torch.max(torch.matmul(classifier_layer[:added_counter], q))
         if args.multiple_queries:
             qs = embeddings_new[j:j+args.num_qs]
             qs = qs.to('cuda')
-            max_vals = [torch.max(torch.matmul(classifier_layer, qs[k])) for k in range(args.num_qs)]
+            max_vals = [torch.max(torch.matmul(classifier_layer[:added_counter], qs[k])) for k in range(args.num_qs)]
 
         
         start = time.time()
@@ -89,11 +95,11 @@ def addDocs(args, ax_params=None):
                     loss = 0
                     for k in range(args.num_qs):
                         loss += lam * max(0, (max_vals[k].item()+m1) - (qs[k].unsqueeze(dim=0) @ x).squeeze())
-                        prod = ((x-classifier_layer) * embeddings).sum(1) + m2
-                        loss += torch.maximum(prod, torch.zeros(len(prod)).to('cuda')).sum()
+                    prod = ((x-classifier_layer[:added_counter]) * embeddings[:added_counter]).sum(1) + m2
+                    loss += torch.maximum(prod, torch.zeros(len(prod)).to('cuda')).sum()
                 else:
                     loss = lam * max(0, (max_val.item()+m1) - (q.unsqueeze(dim=0) @ x).squeeze())
-                    prod = ((x-classifier_layer) * embeddings).sum(1) + m2
+                    prod = ((x-classifier_layer[:added_counter]) * embeddings[:added_counter]).sum(1) + m2
                     loss += torch.maximum(prod, torch.zeros(len(prod)).to('cuda')).sum()
 
                 optimizer.zero_grad()
@@ -102,27 +108,26 @@ def addDocs(args, ax_params=None):
 
             loss = optimizer.step(closure)
             if loss == 0: break
-        if j % 50 == 0:
-            print(f'Done {j} in {time.time() - start} seconds; loss={loss}')
-            
+
         if loss==0:
             timelist.append(time.time() - start)
+        else:
+            timelist.append((time.time() - start)*1000)
+        if j % 100 == 0:
+            print(f'Done {j} in {time.time() - start} seconds; loss={loss}')
+        
+        if loss != 0: failed_docs.append(j)
                 
-            # add to classifier_layer and embeddings
-            classifier_layer = torch.cat((classifier_layer, x.unsqueeze(dim=0))).float()
-            if args.multiple_queries:
-                idx2add = torch.argmax(torch.matmul(qs, x.unsqueeze(dim=1)))
-                embeddings = torch.cat((embeddings, qs[idx2add].unsqueeze(dim=0)))
-            else:
-                embeddings = torch.cat((embeddings, q.unsqueeze(dim=0)))
-        else:
-            if ax_params:
-                timelist.append((time.time() - start)*1000)
-            failed_docs.append(j)
+        # add to classifier_layer and embeddings
+        classifier_layer[added_counter] = x
         if args.multiple_queries:
-            j += args.num_qs
+            idx2add = torch.argmax(torch.matmul(qs, x.unsqueeze(dim=1)))
+            embeddings[added_counter] = qs[idx2add]
         else:
-            j += 1
+            embeddings[added_counter] = q
+        classifier_layer = classifier_layer.detach()
+        embeddings = embeddings.detach()
+        loss = loss.detach()
 
     if ax_params:
         return np.asarray(timelist).mean()
@@ -132,10 +137,11 @@ def addDocs(args, ax_params=None):
 def get_arguments():
     parser = argparse.ArgumentParser()
 
-    parser.add_argument("--lr", default=0.01, type=float, help="initial learning rate for optimization")
-    parser.add_argument("--lam", default=1, type=float, help="lambda for optimization")
-    parser.add_argument("--m1", default=0.05, type=float, help="margin for constraint 1")
-    parser.add_argument("--m2", default=0.0005, type=float, help="margin for constraint 2")
+    parser.add_argument("--single_embedding", action="store_true", help="if we are use single generated query to documents")
+    parser.add_argument("--lr", default=0.008, type=float, help="initial learning rate for optimization")
+    parser.add_argument("--lam", default=6, type=float, help="lambda for optimization")
+    parser.add_argument("--m1", default=0.03, type=float, help="margin for constraint 1")
+    parser.add_argument("--m2", default=0.03, type=float, help="margin for constraint 2")
     parser.add_argument("--num_new_docs", default=None, type=int, help="number of new documents to add")
     parser.add_argument("--lbfgs_iterations", default=1000, type=int, help="number of iterations for lbfgs")
     parser.add_argument("--write_path_dir", default=None, type=str, help="path to write classifier layer to")
@@ -196,16 +202,17 @@ def main():
         args.m1 = best_parameters['m1']
         args.m2 = best_parameters['m2']
 
-    if args.write_path_dir is not None:
-        print("Writing to directory: ", args.write_path_dir)
-        os.makedirs(args.write_path_dir, exist_ok=True)
-        with open(os.path.join(args.write_path_dir, 'best_parameters.txt'), 'w') as f:
-            f.write(f'lr: {args.lr}\n')
-            f.write(f'lambda: {args.lam}\n')
-            f.write(f'm1: {args.m1}\n')
-            f.write(f'm2: {args.m2}\n')
-            print('\n')
-            f.write(f'experiment: {exp_to_df(experiment).to_csv()}\n')
+        if args.write_path_dir is not None:
+            print("Writing to directory: ", args.write_path_dir)
+            os.makedirs(args.write_path_dir, exist_ok=True)
+            with open(os.path.join(args.write_path_dir, 'log.txt'), 'w') as f:
+                f.write(f'Best Parameters:\n')
+                f.write(f'lr: {args.lr}\n')
+                f.write(f'lambda: {args.lam}\n')
+                f.write(f'm1: {args.m1}\n')
+                f.write(f'm2: {args.m2}\n')
+                print('\n')
+                f.write(f'experiment: {exp_to_df(experiment).to_csv()}\n')
     
     print("Adding documents")
     failed_docs, classifier_layer, embeddings, avg_time, timelist = addDocs(args)
@@ -217,6 +224,11 @@ def main():
         joblib.dump(embeddings, os.path.join(args.write_path_dir, 'embeddings.pkl'))
         joblib.dump(failed_docs, os.path.join(args.write_path_dir, 'failed_docs.pkl'))
         joblib.dump(timelist, os.path.join(args.write_path_dir, 'timelist.pkl'))
+        with open(os.path.join(args.write_path_dir, 'log.txt'), 'a') as f:
+            print('\n')
+            f.write(f'Num failed docs: {len(failed_docs)}\n')
+            f.write(f'Final time: {np.asarray(timelist).sum()}\n')
+            f.write(f'Final time average: {np.asarray(timelist).mean()}\n')
 
 if __name__ == "__main__":
     main()
