@@ -76,9 +76,9 @@ def addDocs(args, ax_params=None):
         q = q.to('cuda')
         max_val = torch.max(torch.matmul(classifier_layer, q))
         if args.multiple_queries:
-            qs = embeddings_new[j:j+5]
+            qs = embeddings_new[j:j+args.num_qs]
             qs = qs.to('cuda')
-            max_vals = [torch.max(torch.matmul(classifier_layer, qs[k])) for k in range(5)]
+            max_vals = [torch.max(torch.matmul(classifier_layer, qs[k])) for k in range(args.num_qs)]
 
         
         start = time.time()
@@ -87,7 +87,7 @@ def addDocs(args, ax_params=None):
             def closure():
                 if args.multiple_queries:
                     loss = 0
-                    for k in range(5):
+                    for k in range(args.num_qs):
                         loss += lam * max(0, (max_vals[k].item()+m1) - (qs[k].unsqueeze(dim=0) @ x).squeeze())
                         prod = ((x-classifier_layer) * embeddings).sum(1) + m2
                         loss += torch.maximum(prod, torch.zeros(len(prod)).to('cuda')).sum()
@@ -102,7 +102,7 @@ def addDocs(args, ax_params=None):
 
             loss = optimizer.step(closure)
             if loss == 0: break
-        if j % 100 == 0:
+        if j % 50 == 0:
             print(f'Done {j} in {time.time() - start} seconds; loss={loss}')
             
         if loss==0:
@@ -120,7 +120,7 @@ def addDocs(args, ax_params=None):
                 timelist.append((time.time() - start)*1000)
             failed_docs.append(j)
         if args.multiple_queries:
-            j += 5
+            j += args.num_qs
         else:
             j += 1
 
@@ -132,7 +132,6 @@ def addDocs(args, ax_params=None):
 def get_arguments():
     parser = argparse.ArgumentParser()
 
-    parser.add_argument("--single_embedding", action="store_true", help="if we are use single generated query to documents")
     parser.add_argument("--lr", default=0.01, type=float, help="initial learning rate for optimization")
     parser.add_argument("--lam", default=1, type=float, help="lambda for optimization")
     parser.add_argument("--m1", default=0.05, type=float, help="margin for constraint 1")
@@ -142,6 +141,7 @@ def get_arguments():
     parser.add_argument("--write_path_dir", default=None, type=str, help="path to write classifier layer to")
     parser.add_argument("--tune_parameters", action="store_true", help="flag for tune parameters")
     parser.add_argument("--multiple_queries", action="store_true", help="flag for multiple_queries")
+    parser.add_argument("--num_qs", default=5, type=int, help="number of generated queries to use")
     parser.add_argument(
         "--init", 
         default='random', 
