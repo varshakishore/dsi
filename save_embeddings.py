@@ -215,11 +215,21 @@ def main():
             print('embedding file written.')
 
         else:
-
             embedding_matrix_pd = pd.DataFrame(embedding_matrix)
             embedding_matrix_pd.insert(0, "doc_ids", labels)
-            embedding_matrix_st = embedding_matrix_pd.groupby('doc_ids').apply(lambda x:x)\
-            joblib.dump(embedding_matrix_st, os.path.join(args.output_dir, f'{split}_embeds.pkl'))
+            embedding_matrix_sorted = embedding_matrix_pd.sort_values(by=['doc_ids'])
+            ### the index of sorting 
+            index = embedding_matrix_sorted.index
+            ### doc_ids list, access through the index
+            doc_ids = embedding_matrix_sorted['doc_ids']
+
+            if not os.path.exists(os.path.join(args.output_dir,f'{args.split}')):
+                os.mkdir(os.path.join(args.output_dir,f'{args.split}'))
+            joblib.dump(index, os.path.join(args.output_dir,f'{args.split}', 'index.pkl'))
+            joblib.dump(doc_ids, os.path.join(args.output_dir, f'{args.split}','docids.pkl'))
+            joblib.dump(embedding_matrix, os.path.join(args.output_dir,f'{args.split}', 'embeddings.pkl'))
+
+            print('embedding matrix, index and docids written.')
 
 
 if __name__ == "__main__":
