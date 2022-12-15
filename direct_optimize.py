@@ -90,6 +90,12 @@ def addDocs(args, args_valid=None, ax_params=None):
 
     step = args.num_qs if args.multiple_queries else 1
     for j in tqdm(range(start_doc*step, num_new_embeddings, step)):
+        # this set of hyperparameters is not working
+        if len(timelist) == 100 and len(failed_docs) >= 90 and ax_params: 
+            print("Bad hyperparameters, skipping...")
+            print("Failed docs: ", len(failed_docs))
+            print(ax_params)
+            return 0.0 
     # for j in range(num_new_docs):
         q = embeddings_new[j]
         if args.init == 'random':
@@ -365,6 +371,8 @@ def main():
         joblib.dump(failed_docs, os.path.join(args.write_path_dir, 'failed_docs.pkl'))
         joblib.dump(timelist, os.path.join(args.write_path_dir, 'timelist.pkl'))
         with open(os.path.join(args.write_path_dir, 'log.txt'), 'a') as f:
+            print('\n')
+            print(f'Hyperparameters: lr={args.lr}, m1={args.m1}, m2={args.m2}, lambda={args.lam}\n')
             print('\n')
             f.write(f'Num failed docs: {len(failed_docs)}\n')
             f.write(f'Final time: {np.asarray(timelist).sum()}\n')
