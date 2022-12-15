@@ -124,7 +124,7 @@ def addDocs(args, args_valid=None, ax_params=None):
             timelist.append(time.time() - start)
         else:
             timelist.append((time.time() - start)*1000)
-        if j % 100 == 0:
+        if j % 500 == 0:
             print(f'Done {j} in {time.time() - start} seconds; loss={loss}')
         
         if loss != 0: failed_docs.append(j)
@@ -148,7 +148,7 @@ def addDocs(args, args_valid=None, ax_params=None):
         print(f'Num failed docs: {len(failed_docs)}')
         print(ax_params)
 
-        return hit_at_1
+        return hit_at_1.item()
         
     return failed_docs, classifier_layer, embeddings, np.asarray(timelist).mean(), timelist
 
@@ -293,6 +293,10 @@ def get_validation_arguments(optimized_embeddings_path):
 def main():
     set_seed()
     args = get_arguments()
+
+    # args_valid = get_validation_arguments(os.path.join(args.write_path_dir, 'temp.pkl'))
+    # hit_at_1, hit_at_5, hit_at_10, mrr_at_10 = validate_script(args_valid, new_validation_subset=True)
+    # import pdb; pdb.set_trace()
 
     if args.tune_parameters:
         print("Tuning parameters")
