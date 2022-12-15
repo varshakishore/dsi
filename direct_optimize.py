@@ -22,7 +22,8 @@ def set_seed(seed=123):
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
 
-def initialize(embeddings_path, 
+def initialize(num_qs,
+                embeddings_path, 
                 model_path,
                 multiple_queries=False):
     set_seed()
@@ -37,7 +38,11 @@ def initialize(embeddings_path,
         embeddings_new = sentence_embeddings[1000010:][::10]
     else:
         embeddings = sentence_embeddings[:1000010][::10]
-        embeddings_new = sentence_embeddings[1000010:][::2]
+        num_new_docs = 9714
+        embeddings_new = torch.zeros(num_new_docs * num_qs, 768)
+        all_embeddings_new = sentence_embeddings[1000010:,:]
+        for i in range(num_new_docs):
+            embeddings_new[i * num_qs : (i+1) * num_qs, :] = all_embeddings_new[i*10 : i*10 + num_qs, :]
     
     return sentence_embeddings, embeddings, embeddings_new, classifier_layer
 
@@ -48,7 +53,7 @@ def addDocs(args, args_valid=None, ax_params=None):
     max_val =[]
     failed_docs = []
     
-    _, embeddings, embeddings_new, classifier_layer = initialize(args.embeddings_path, args.model_path, args.multiple_queries)
+    _, embeddings, embeddings_new, classifier_layer = initialize(args.num_qs, args.embeddings_path, args.model_path, args.multiple_queries)
     if args.num_new_docs is None:
         num_new_embeddings = len(embeddings_new)
         if args.multiple_queries:
@@ -115,7 +120,6 @@ def addDocs(args, args_valid=None, ax_params=None):
 
             loss = optimizer.step(closure)
             if loss == 0: break
-
         if loss==0:
             timelist.append(time.time() - start)
         else:
@@ -151,7 +155,6 @@ def addDocs(args, args_valid=None, ax_params=None):
 def get_arguments():
     parser = argparse.ArgumentParser()
 
-    parser.add_argument("--single_embedding", action="store_true", help="if we are use single generated query to documents")
     parser.add_argument("--lr", default=0.008, type=float, help="initial learning rate for optimization")
     parser.add_argument("--lam", default=6, type=float, help="lambda for optimization")
     parser.add_argument("--m1", default=0.03, type=float, help="margin for constraint 1")
@@ -162,6 +165,7 @@ def get_arguments():
     parser.add_argument("--tune_parameters", action="store_true", help="flag for tune parameters")
     parser.add_argument("--multiple_queries", action="store_true", help="flag for multiple_queries")
     parser.add_argument("--num_qs", default=5, type=int, help="number of generated queries to use")
+    parser.add_argument("--train_q", action="store_true", help="if we are using train queries to add documents")
     parser.add_argument(
         "--init", 
         default='random', 
