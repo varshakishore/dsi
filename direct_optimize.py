@@ -42,7 +42,7 @@ def initialize(train_q,
         embeddings = sentence_embeddings[:1000010][::10]
         num_new_docs = 9714
         embeddings_new = torch.zeros(num_new_docs * num_qs, 768)
-        all_embeddings_new = sentence_embeddings[1000010:,:]
+        all_embeddings_new = sentence_embeddings[1000010:]
         for i in range(num_new_docs):
             embeddings_new[i * num_qs : (i+1) * num_qs, :] = all_embeddings_new[i*10 : i*10 + num_qs, :]
         
