@@ -22,7 +22,8 @@ def set_seed(seed=123):
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
 
-def initialize(num_qs,
+def initialize(train_q,
+                num_qs,
                 embeddings_path, 
                 model_path,
                 multiple_queries=False):
@@ -32,6 +33,7 @@ def initialize(num_qs,
     model = QueryClassifier(class_num)
     load_saved_weights(model, model_path, strict_set=False)
     classifier_layer = model.classifier.weight.data
+
 
     if not multiple_queries:
         embeddings = sentence_embeddings[:1000010][::10]
@@ -43,7 +45,13 @@ def initialize(num_qs,
         all_embeddings_new = sentence_embeddings[1000010:,:]
         for i in range(num_new_docs):
             embeddings_new[i * num_qs : (i+1) * num_qs, :] = all_embeddings_new[i*10 : i*10 + num_qs, :]
-    
+        
+    if train_q:
+        print('using train set queries...')
+        import pdb; pdb.set_trace()
+        train_newqs = joblib.load('/home/cw862/DSI/dsi/train/train_newqs.pkl')
+        embeddings_new = torch.cat((embeddings_new, train_newqs))
+
     return sentence_embeddings, embeddings, embeddings_new, classifier_layer
 
 def addDocs(args, args_valid=None, ax_params=None):
@@ -53,7 +61,7 @@ def addDocs(args, args_valid=None, ax_params=None):
     max_val =[]
     failed_docs = []
     
-    _, embeddings, embeddings_new, classifier_layer = initialize(args.num_qs, args.embeddings_path, args.model_path, args.multiple_queries)
+    _, embeddings, embeddings_new, classifier_layer = initialize(args.train_q, args.num_qs, args.embeddings_path, args.model_path, args.multiple_queries)
     if args.num_new_docs is None:
         num_new_embeddings = len(embeddings_new)
         if args.multiple_queries:
@@ -69,6 +77,10 @@ def addDocs(args, args_valid=None, ax_params=None):
         start_doc = 9000
     else:
         lr = args.lr; lam = args.lam; m1 = args.m1; m2 = args.m2; start_doc = 0
+
+    if args.train_q:
+        train_new_ids = joblib.load('/home/cw862/DSI/dsi/train/train_new_ids.pkl')
+        train_q_start = args.num_qs * 9714
 
     added_counter = len(classifier_layer)
 
