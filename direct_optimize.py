@@ -75,6 +75,8 @@ def addDocs(args, args_valid=None, ax_params=None):
         lr = ax_params['lr']; lam = ax_params['lambda']; m1 = ax_params['m1']; m2 = ax_params['m2']
         # num_new_docs = 500
         start_doc = 9000
+        print("Using hyperparameters:")
+        print(ax_params)
     else:
         lr = args.lr; lam = args.lam; m1 = args.m1; m2 = args.m2; start_doc = 0
 
@@ -84,7 +86,6 @@ def addDocs(args, args_valid=None, ax_params=None):
         index = train_new_ids.index
         ### the sorted list of doc_ids
         doc_id = train_new_ids.to_numpy(dtype=int)
-        ### the position where to start adding train_qs
 
     added_counter = len(classifier_layer)
 
@@ -95,7 +96,7 @@ def addDocs(args, args_valid=None, ax_params=None):
     step = args.num_qs if args.multiple_queries else 1
     for j in tqdm(range(start_doc*step, num_new_embeddings, step)):
         # this set of hyperparameters is not working
-        if len(timelist) == 100 and len(failed_docs) >= 90 and ax_params: 
+        if len(timelist) == 50 and len(failed_docs) >= 25 and ax_params: 
             print("Bad hyperparameters, skipping...")
             print("Failed docs: ", len(failed_docs))
             print(ax_params)
@@ -114,9 +115,10 @@ def addDocs(args, args_valid=None, ax_params=None):
         embeddings = embeddings.to('cuda')
         classifier_layer = classifier_layer.to('cuda')
         q = q.to('cuda')
+        doc_now = start_doc + (j - start_doc*step) // step 
         max_val = torch.max(torch.matmul(classifier_layer[:added_counter], q))
-        if args.train_q:
-            train_qpos = numpy.argwhere(doc_id == start_doc + 100001)
+        if args.train_q: 
+            train_qpos = numpy.argwhere(doc_id == doc_now + 100001)
             num_trainq = train_qpos.shape[0]
             train_q = torch.zeros((num_trainq,768))
             for k in range(num_trainq):
@@ -129,7 +131,7 @@ def addDocs(args, args_valid=None, ax_params=None):
             qs = qs.to('cuda')
             if args.train_q:
                 ### the positions of the train_qs for a certain doc
-                train_qpos = numpy.argwhere(doc_id == start_doc + 100001)
+                train_qpos = numpy.argwhere(doc_id == doc_now + 100001)
                 num_trainq = train_qpos.shape[0]
                 train_q = torch.zeros((num_trainq,768))
                 for k in range(num_trainq):
