@@ -48,11 +48,11 @@ def initialize(train_q,
         
     if train_q:
         print('using train set queries...')
-        import pdb; pdb.set_trace()
-        train_newqs = joblib.load('/home/cw862/DSI/dsi/train/train_newqs.pkl')
-        embeddings_new = torch.cat((embeddings_new, train_newqs))
+        train_qs = joblib.load('/home/cw862/DSI/dsi/train/embeddings.pkl')
+    else: 
+        train_qs = None
 
-    return sentence_embeddings, embeddings, embeddings_new, classifier_layer
+    return train_qs, sentence_embeddings, embeddings, embeddings_new, classifier_layer
 
 def addDocs(args, args_valid=None, ax_params=None):
     global time
@@ -61,7 +61,7 @@ def addDocs(args, args_valid=None, ax_params=None):
     max_val =[]
     failed_docs = []
     
-    _, embeddings, embeddings_new, classifier_layer = initialize(args.train_q, args.num_qs, args.embeddings_path, args.model_path, args.multiple_queries)
+    train_qs, _, embeddings, embeddings_new, classifier_layer = initialize(args.train_q, args.num_qs, args.embeddings_path, args.model_path, args.multiple_queries)
     if args.num_new_docs is None:
         num_new_embeddings = len(embeddings_new)
         if args.multiple_queries:
@@ -80,7 +80,11 @@ def addDocs(args, args_valid=None, ax_params=None):
 
     if args.train_q:
         train_new_ids = joblib.load('/home/cw862/DSI/dsi/train/train_new_ids.pkl')
-        train_q_start = args.num_qs * 9714
+        ### the index list to access the train queries from train_newqs
+        index = train_new_ids.index
+        ### the sorted list of doc_ids
+        doc_id = train_new_ids.to_numpy(dtype=int)
+        ### the position where to start adding train_qs
 
     added_counter = len(classifier_layer)
 
@@ -111,19 +115,37 @@ def addDocs(args, args_valid=None, ax_params=None):
         classifier_layer = classifier_layer.to('cuda')
         q = q.to('cuda')
         max_val = torch.max(torch.matmul(classifier_layer[:added_counter], q))
+        if args.train_q:
+            train_qpos = numpy.argwhere(doc_id == start_doc + 100001)
+            num_trainq = train_qpos.shape[0]
+            train_q = torch.zeros((num_trainq,768))
+            for k in range(num_trainq):
+                train_q[k,:] = train_qs[index[train_qpos[k][0]]]
+            train_q = train_q.to('cuda')
+            qs = torch.cat((q.unsqueeze(dim=0), train_q))
+            max_vals = [torch.max(torch.matmul(classifier_layer[:added_counter], qs[k])) for k in range(qs.shape[0])]
         if args.multiple_queries:
             qs = embeddings_new[j:j+args.num_qs]
             qs = qs.to('cuda')
-            max_vals = [torch.max(torch.matmul(classifier_layer[:added_counter], qs[k])) for k in range(args.num_qs)]
-
+            if args.train_q:
+                ### the positions of the train_qs for a certain doc
+                train_qpos = numpy.argwhere(doc_id == start_doc + 100001)
+                num_trainq = train_qpos.shape[0]
+                train_q = torch.zeros((num_trainq,768))
+                for k in range(num_trainq):
+                    train_q[k,:] = train_qs[index[train_qpos[k][0]]]
+                train_q = train_q.to('cuda')
+                qs = torch.cat((qs, train_q))
+            max_vals = [torch.max(torch.matmul(classifier_layer[:added_counter], qs[k])) for k in range(qs.shape[0])]
         
+
         start = time.time()
         for i in range(args.lbfgs_iterations):
             x.requires_grad = True
             def closure():
-                if args.multiple_queries:
+                if args.multiple_queries or args.train_q:
                     loss = 0
-                    for k in range(args.num_qs):
+                    for k in range(qs.shape[0]):
                         loss += lam * max(0, (max_vals[k].item()+m1) - (qs[k].unsqueeze(dim=0) @ x).squeeze())
                     prod = ((x-classifier_layer[:added_counter]) * embeddings[:added_counter]).sum(1) + m2
                     loss += torch.maximum(prod, torch.zeros(len(prod)).to('cuda')).sum()
@@ -142,7 +164,7 @@ def addDocs(args, args_valid=None, ax_params=None):
             timelist.append(time.time() - start)
         else:
             timelist.append((time.time() - start)*1000)
-        if j % 500 == 0:
+        if j % 50 == 0:
             print(f'Done {j} in {time.time() - start} seconds; loss={loss}')
         
         if loss != 0: failed_docs.append(j)
