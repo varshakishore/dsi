@@ -94,7 +94,7 @@ def addDocs(args, args_valid=None, ax_params=None):
     embeddings = torch.cat((embeddings, torch.zeros(num_new_docs, len(classifier_layer[0]))))
 
     step = args.num_qs if args.multiple_queries else 1
-    for j in tqdm(range(start_doc*step, num_new_embeddings, step)):
+    for done, j in tqdm(enumerate(range(start_doc*step, num_new_embeddings, step))):
         # this set of hyperparameters is not working
         if len(timelist) == 50 and len(failed_docs) >= 25 and ax_params: 
             print("Bad hyperparameters, skipping...")
@@ -166,8 +166,8 @@ def addDocs(args, args_valid=None, ax_params=None):
             timelist.append(time.time() - start)
         else:
             timelist.append((time.time() - start)*1000)
-        if j % 50 == 0:
-            print(f'Done {j} in {time.time() - start} seconds; loss={loss}')
+        if done % 50 == 0:
+            print(f'Done {done} in {time.time() - start} seconds; loss={loss}')
         
         if loss != 0: failed_docs.append(j)
                 
