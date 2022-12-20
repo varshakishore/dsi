@@ -101,7 +101,6 @@ def addDocs(args, args_valid=None, ax_params=None):
             print("Failed docs: ", len(failed_docs))
             print(ax_params)
             return 0.0 
-    # for j in range(num_new_docs):
         q = embeddings_new[j]
         if args.init == 'random':
             x = torch.nn.Linear(768, 1).weight.data.squeeze()
@@ -115,22 +114,25 @@ def addDocs(args, args_valid=None, ax_params=None):
         embeddings = embeddings.to('cuda')
         classifier_layer = classifier_layer.to('cuda')
         q = q.to('cuda')
-        doc_now = start_doc + (j - start_doc*step) // step 
+        doc_now = start_doc + done
         max_val = torch.max(torch.matmul(classifier_layer[:added_counter], q))
         if args.train_q: 
+            ### find the positions of the train queries for a specific doc_id in the embeddings matrix
             train_qpos = numpy.argwhere(doc_id == doc_now + 100001)
+            ### number of train queries corresponded to a doc_id
             num_trainq = train_qpos.shape[0]
+            ### initialize the train queries matrix
             train_q = torch.zeros((num_trainq,768))
             for k in range(num_trainq):
                 train_q[k,:] = train_qs[index[train_qpos[k][0]]]
             train_q = train_q.to('cuda')
+            ### use generated queries and train queries
             qs = torch.cat((q.unsqueeze(dim=0), train_q))
             max_vals = [torch.max(torch.matmul(classifier_layer[:added_counter], qs[k])) for k in range(qs.shape[0])]
         if args.multiple_queries:
             qs = embeddings_new[j:j+args.num_qs]
             qs = qs.to('cuda')
             if args.train_q:
-                ### the positions of the train_qs for a certain doc
                 train_qpos = numpy.argwhere(doc_id == doc_now + 100001)
                 num_trainq = train_qpos.shape[0]
                 train_q = torch.zeros((num_trainq,768))
@@ -162,14 +164,13 @@ def addDocs(args, args_valid=None, ax_params=None):
 
             loss = optimizer.step(closure)
             if loss == 0: break
-        if loss==0:
-            timelist.append(time.time() - start)
-        else:
-            timelist.append((time.time() - start)*1000)
+
+        timelist.append(time.time() - start)
+
         if done % 50 == 0:
             print(f'Done {done} in {time.time() - start} seconds; loss={loss}')
         
-        if loss != 0: failed_docs.append(j)
+        if loss != 0: failed_docs.append(doc_now)
                 
         # add to classifier_layer and embeddings
         classifier_layer[added_counter] = x
@@ -203,6 +204,7 @@ def get_arguments():
     parser.add_argument("--m2", default=0.03, type=float, help="margin for constraint 2")
     parser.add_argument("--num_new_docs", default=None, type=int, help="number of new documents to add")
     parser.add_argument("--lbfgs_iterations", default=1000, type=int, help="number of iterations for lbfgs")
+    parser.add_argument("--trials", default=30, type=int, help="number of trials to run for hyperparameter tuning")
     parser.add_argument("--write_path_dir", default=None, type=str, required=True, help="path to write classifier layer to")
     parser.add_argument("--tune_parameters", action="store_true", help="flag for tune parameters")
     parser.add_argument("--multiple_queries", action="store_true", help="flag for multiple_queries")
@@ -355,7 +357,7 @@ def main():
         ],
         evaluation_function=partial(addDocs, args, args_valid),
         objective_name='time',
-        total_trials=30,
+        total_trials=args.trials,
         minimize=False,
         )
 
@@ -380,7 +382,7 @@ def main():
                 f.write(f'lambda: {args.lam}\n')
                 f.write(f'm1: {args.m1}\n')
                 f.write(f'm2: {args.m2}\n')
-                print('\n')
+                f.write('\n')
                 f.write(f'experiment: {exp_to_df(experiment).to_csv()}\n')
     
     print("Adding documents")
@@ -395,9 +397,9 @@ def main():
         joblib.dump(failed_docs, os.path.join(args.write_path_dir, 'failed_docs.pkl'))
         joblib.dump(timelist, os.path.join(args.write_path_dir, 'timelist.pkl'))
         with open(os.path.join(args.write_path_dir, 'log.txt'), 'a') as f:
-            print('\n')
-            print(f'Hyperparameters: lr={args.lr}, m1={args.m1}, m2={args.m2}, lambda={args.lam}\n')
-            print('\n')
+            f.write('\n')
+            f.write(f'Hyperparameters: lr={args.lr}, m1={args.m1}, m2={args.m2}, lambda={args.lam}\n')
+            f.write('\n')
             f.write(f'Num failed docs: {len(failed_docs)}\n')
             f.write(f'Final time: {np.asarray(timelist).sum()}\n')
             f.write(f'Final time average: {np.asarray(timelist).mean()}\n')
@@ -406,12 +408,12 @@ def main():
     hit_at_1, hit_at_5, hit_at_10, mrr_at_10 = validate_script(args_valid, new_validation_subset=False)
     if args.write_path_dir is not None:
          with open(os.path.join(args.write_path_dir, 'log.txt'), 'a') as f:
-            print('\n')
-            print('Validation results on the new test set: \n')
-            print(f'hit_at_1: {hit_at_1}')
-            print(f'hit_at_5: {hit_at_5}')
-            print(f'hit_at_10: {hit_at_10}')
-            print(f'mrr_at_10: {mrr_at_10}')
+            f.write('\n')
+            f.write('Validation results on the new test set: \n')
+            f.write(f'hit_at_1: {hit_at_1}')
+            f.write(f'hit_at_5: {hit_at_5}')
+            f.write(f'hit_at_10: {hit_at_10}')
+            f.write(f'mrr_at_10: {mrr_at_10}')
 
 if __name__ == "__main__":
     main()
