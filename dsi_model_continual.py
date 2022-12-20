@@ -285,17 +285,26 @@ def validate(args, model, val_dataloader):
             
     return hit_at_1, hit_at_5, hit_at_10, mrr_at_10
 
-def validate_script(args, new_validation_subset=False):
+def validate_script(args, new_validation_subset=False, split="new_val"):
 
-    _, model, train_dataloader, val_dataloader, new_train_dataloader, new_val_dataloader, class_num_old = getModelDataloader(args, new_validation_subset=new_validation_subset)
+    _, model, train_dataloader, val_dataloader, new_train_dataloader, new_val_dataloader, new_extq_dataloader, old_extq_dataloader, class_num_old = getModelDataloader(args, new_validation_subset=new_validation_subset)
 
     # we are computing validation for doc_ids>=9000
     if new_validation_subset:
         model.module.classifier.weight.data[-714:] = model.module.classifier.weight.data[class_num_old:class_num_old+714]
         model.module.classifier.weight.data[class_num_old:class_num_old+9000] = model.module.classifier.weight.data[:9000]
 
-    hits_at_1, hits_at_5, hits_at_10, mrr_at_10 = validate(args, model, new_val_dataloader)
-    length = len(new_val_dataloader.dataset)
+    if split == "new_val":
+        to_eval = new_val_dataloader
+    elif split == "old_val":
+        to_eval = val_dataloader
+    elif split == "new_gen":
+        to_eval = new_extq_dataloader
+    elif split == "old_gen":
+        to_eval = old_extq_dataloader
+
+    hits_at_1, hits_at_5, hits_at_10, mrr_at_10 = validate(args, model, to_eval)
+    length = len(to_eval.dataset)
     hits_at_1 = hits_at_1/length
     hits_at_5 = hits_at_5/length
     hits_at_10 = hits_at_10/length
@@ -335,6 +344,13 @@ def getModelDataloader(args, new_validation_subset=False):
         cache_dir='cache'
     )['train']   
 
+    extended_generated_queries = datasets.load_dataset(
+        'json',
+        data_files='/home/vk352/ANCE/NQ320k_dataset_v2/passages_extended.json',
+        ignore_verifications=False,
+        cache_dir='cache'
+    )['train']
+
     logger.info('passages loaded')
 
     val_data = datasets.load_dataset(
@@ -360,6 +376,9 @@ def getModelDataloader(args, new_validation_subset=False):
         new_val_data = val_data.filter(lambda example: example['doc_id'] > 100000)
     new_generated_queries = generated_queries.filter(lambda example: example['doc_id'] > 100000)
     # import pdb; pdb.set_trace()
+
+    ext_gen_queries_old = extended_generated_queries.filter(lambda example: example['doc_id'] <= 100000)
+    ext_gen_queries_new = extended_generated_queries.filter(lambda example: example['doc_id'] > 100000)
 
     train_data = train_data_tp
     val_data = val_data_tp
@@ -426,6 +445,10 @@ def getModelDataloader(args, new_validation_subset=False):
     new_Train_DSIQG = ConcatDataset([new_DSIQG_train, new_gen_queries])
     new_Val_DSIQG = new_DSIQG_val
 
+    new_ext_q = GenPassageDataset(tokenizer=tokenizer, datadict = ext_gen_queries_new)
+    old_ext_q = GenPassageDataset(tokenizer=tokenizer, datadict = ext_gen_queries_old)
+
+
     # optimizer = torch.optim.AdamW(model.parameters(), lr=args.learning_rate)
     # scheduler = torch.optim.lr_scheduler.LinearLR(optimizer, start_factor=0.9, end_factor=1, total_iters=10)
 
@@ -472,8 +495,24 @@ def getModelDataloader(args, new_validation_subset=False):
                                 shuffle=True,
                                 drop_last=False)
 
+    new_extq_dataloader = DataLoader(new_ext_q, 
+                                batch_size=args.batch_size,
+                                collate_fn=IndexingCollator(
+                                tokenizer,
+                                padding='longest'),
+                                shuffle=True,
+                                drop_last=False)   
 
-    return args, model, train_dataloader, val_dataloader, new_train_dataloader, new_val_dataloader, class_num_old
+    old_extq_dataloader = DataLoader(old_ext_q, 
+                                batch_size=args.batch_size,
+                                collate_fn=IndexingCollator(
+                                tokenizer,
+                                padding='longest'),
+                                shuffle=True,
+                                drop_last=False)                         
+
+
+    return args, model, train_dataloader, val_dataloader, new_train_dataloader, new_val_dataloader, new_extq_dataloader, old_extq_dataloader, class_num_old
 
 def main():
     args = get_arguments()
