@@ -48,7 +48,7 @@ def initialize(train_q,
         
     if train_q:
         print('using train set queries...')
-        train_qs = joblib.load('/home/cw862/DSI/dsi/train/embeddings.pkl')
+        train_qs = joblib.load('/home/cw862/DSI/dsi/dpr5_olddocs_finetune_0.001_filtered_fixed/train-embeddings.pkl')
     else: 
         train_qs = None
 
@@ -217,12 +217,12 @@ def get_arguments():
         help='way to initialize the classifier vector')
     parser.add_argument(
         "--embeddings_path", 
-        default='/home/vk352/dsi/outputs/dpr5_finetune_0.001_filtered_fixed/nq320k_gen_passage_embeddings.pkl', 
+        default='/home/cw862/DSI/dsi/dpr5_olddocs_finetune_0.001_filtered_fixed/gen-embeddings.pkl', 
         type=str, 
         help="path to embeddings")
     parser.add_argument(
         "--model_path", 
-        default="/home/vk352/dsi/outputs/dpr5_finetune_0.001_filtered_fixed/projection_nq320k_epoch15", 
+        default="/home/vk352/dsi/outputs/dpr5_olddocs_finetune_0.001_filtered_fixed/projection_nq320k_epoch17", 
         type=str, 
         help="path to model")
     
@@ -328,7 +328,7 @@ def get_validation_arguments(optimized_embeddings_path):
     args = parser.parse_args(['--freeze_base_model', 
     '--output_dir', '/home/vk352/dsi/outputs/dpr5_finetune_0.001_filtered_fixed_new/', '--model_name', 'bert-base-uncased', 
     '--batch_size', '1600', 
-    '--initialize_model', '/home/vk352/dsi/outputs/dpr5_finetune_0.001_filtered_fixed/projection_nq320k_epoch15',
+    '--initialize_model', '/home/vk352/dsi/outputs/dpr5_olddocs_finetune_0.001_filtered_fixed/projection_nq320k_epoch17',
     '--optimized_embeddings', optimized_embeddings_path])
 
     return args
