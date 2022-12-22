@@ -48,11 +48,11 @@ def initialize(train_q,
         
     if train_q:
         print('using train set queries...')
-        import pdb; pdb.set_trace()
-        train_newqs = joblib.load('/home/cw862/DSI/dsi/train/train_newqs.pkl')
-        embeddings_new = torch.cat((embeddings_new, train_newqs))
+        train_qs = joblib.load('/home/cw862/DSI/dsi/train/embeddings.pkl')
+    else: 
+        train_qs = None
 
-    return sentence_embeddings, embeddings, embeddings_new, classifier_layer
+    return train_qs, sentence_embeddings, embeddings, embeddings_new, classifier_layer
 
 def addDocs(args, args_valid=None, ax_params=None):
     global time
@@ -61,7 +61,7 @@ def addDocs(args, args_valid=None, ax_params=None):
     max_val =[]
     failed_docs = []
     
-    _, embeddings, embeddings_new, classifier_layer = initialize(args.train_q, args.num_qs, args.embeddings_path, args.model_path, args.multiple_queries)
+    train_qs, _, embeddings, embeddings_new, classifier_layer = initialize(args.train_q, args.num_qs, args.embeddings_path, args.model_path, args.multiple_queries)
     if args.num_new_docs is None:
         num_new_embeddings = len(embeddings_new)
         if args.multiple_queries:
@@ -75,12 +75,17 @@ def addDocs(args, args_valid=None, ax_params=None):
         lr = ax_params['lr']; lam = ax_params['lambda']; m1 = ax_params['m1']; m2 = ax_params['m2']
         # num_new_docs = 500
         start_doc = 9000
+        print("Using hyperparameters:")
+        print(ax_params)
     else:
         lr = args.lr; lam = args.lam; m1 = args.m1; m2 = args.m2; start_doc = 0
 
     if args.train_q:
         train_new_ids = joblib.load('/home/cw862/DSI/dsi/train/train_new_ids.pkl')
-        train_q_start = args.num_qs * 9714
+        ### the index list to access the train queries from train_newqs
+        index = train_new_ids.index
+        ### the sorted list of doc_ids
+        doc_id = train_new_ids.to_numpy(dtype=int)
 
     added_counter = len(classifier_layer)
 
@@ -89,14 +94,13 @@ def addDocs(args, args_valid=None, ax_params=None):
     embeddings = torch.cat((embeddings, torch.zeros(num_new_docs, len(classifier_layer[0]))))
 
     step = args.num_qs if args.multiple_queries else 1
-    for j in tqdm(range(start_doc*step, num_new_embeddings, step)):
+    for done, j in tqdm(enumerate(range(start_doc*step, num_new_embeddings, step))):
         # this set of hyperparameters is not working
-        if len(timelist) == 100 and len(failed_docs) >= 90 and ax_params: 
+        if len(timelist) == 50 and len(failed_docs) >= 25 and ax_params: 
             print("Bad hyperparameters, skipping...")
             print("Failed docs: ", len(failed_docs))
             print(ax_params)
             return 0.0 
-    # for j in range(num_new_docs):
         q = embeddings_new[j]
         if args.init == 'random':
             x = torch.nn.Linear(768, 1).weight.data.squeeze()
@@ -110,20 +114,42 @@ def addDocs(args, args_valid=None, ax_params=None):
         embeddings = embeddings.to('cuda')
         classifier_layer = classifier_layer.to('cuda')
         q = q.to('cuda')
+        doc_now = start_doc + done
         max_val = torch.max(torch.matmul(classifier_layer[:added_counter], q))
+        if args.train_q: 
+            ### find the positions of the train queries for a specific doc_id in the embeddings matrix
+            train_qpos = numpy.argwhere(doc_id == doc_now + 100001)
+            ### number of train queries corresponded to a doc_id
+            num_trainq = train_qpos.shape[0]
+            ### initialize the train queries matrix
+            train_q = torch.zeros((num_trainq,768))
+            for k in range(num_trainq):
+                train_q[k,:] = train_qs[index[train_qpos[k][0]]]
+            train_q = train_q.to('cuda')
+            ### use generated queries and train queries
+            qs = torch.cat((q.unsqueeze(dim=0), train_q))
+            max_vals = [torch.max(torch.matmul(classifier_layer[:added_counter], qs[k])) for k in range(qs.shape[0])]
         if args.multiple_queries:
             qs = embeddings_new[j:j+args.num_qs]
             qs = qs.to('cuda')
-            max_vals = [torch.max(torch.matmul(classifier_layer[:added_counter], qs[k])) for k in range(args.num_qs)]
-
+            if args.train_q:
+                train_qpos = numpy.argwhere(doc_id == doc_now + 100001)
+                num_trainq = train_qpos.shape[0]
+                train_q = torch.zeros((num_trainq,768))
+                for k in range(num_trainq):
+                    train_q[k,:] = train_qs[index[train_qpos[k][0]]]
+                train_q = train_q.to('cuda')
+                qs = torch.cat((qs, train_q))
+            max_vals = [torch.max(torch.matmul(classifier_layer[:added_counter], qs[k])) for k in range(qs.shape[0])]
         
+
         start = time.time()
         for i in range(args.lbfgs_iterations):
             x.requires_grad = True
             def closure():
-                if args.multiple_queries:
+                if args.multiple_queries or args.train_q:
                     loss = 0
-                    for k in range(args.num_qs):
+                    for k in range(qs.shape[0]):
                         loss += lam * max(0, (max_vals[k].item()+m1) - (qs[k].unsqueeze(dim=0) @ x).squeeze())
                     prod = ((x-classifier_layer[:added_counter]) * embeddings[:added_counter]).sum(1) + m2
                     loss += torch.maximum(prod, torch.zeros(len(prod)).to('cuda')).sum()
@@ -138,13 +164,13 @@ def addDocs(args, args_valid=None, ax_params=None):
 
             loss = optimizer.step(closure)
             if loss == 0: break
-        
+
         timelist.append(time.time() - start)
+
+        if done % 50 == 0:
+            print(f'Done {done} in {time.time() - start} seconds; loss={loss}')
         
-        if j % 500 == 0:
-            print(f'Done {j} in {time.time() - start} seconds; loss={loss}')
-        
-        if loss != 0: failed_docs.append(j)
+        if loss != 0: failed_docs.append(doc_now)
                 
         # add to classifier_layer and embeddings
         classifier_layer[added_counter] = x
@@ -178,6 +204,7 @@ def get_arguments():
     parser.add_argument("--m2", default=0.03, type=float, help="margin for constraint 2")
     parser.add_argument("--num_new_docs", default=None, type=int, help="number of new documents to add")
     parser.add_argument("--lbfgs_iterations", default=1000, type=int, help="number of iterations for lbfgs")
+    parser.add_argument("--trials", default=30, type=int, help="number of trials to run for hyperparameter tuning")
     parser.add_argument("--write_path_dir", default=None, type=str, required=True, help="path to write classifier layer to")
     parser.add_argument("--tune_parameters", action="store_true", help="flag for tune parameters")
     parser.add_argument("--multiple_queries", action="store_true", help="flag for multiple_queries")
@@ -330,7 +357,7 @@ def main():
         ],
         evaluation_function=partial(addDocs, args, args_valid),
         objective_name='val_acc',
-        total_trials=30,
+        total_trials=args.trials,
         minimize=False,
         )
 
@@ -355,7 +382,7 @@ def main():
                 f.write(f'lambda: {args.lam}\n')
                 f.write(f'm1: {args.m1}\n')
                 f.write(f'm2: {args.m2}\n')
-                print('\n')
+                f.write('\n')
                 f.write(f'experiment: {exp_to_df(experiment).to_csv()}\n')
                 f.write(f'-'*100)
     
