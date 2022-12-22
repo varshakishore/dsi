@@ -26,6 +26,7 @@ def initialize(train_q,
                 num_qs,
                 embeddings_path, 
                 model_path,
+                train_q_path=None,
                 multiple_queries=False):
     set_seed()
     sentence_embeddings = joblib.load(embeddings_path)
@@ -48,7 +49,7 @@ def initialize(train_q,
         
     if train_q:
         print('using train set queries...')
-        train_qs = joblib.load('/home/cw862/DSI/dsi/dpr5_olddocs_finetune_0.001_filtered_fixed/train-embeddings.pkl')
+        train_qs = joblib.load(train_q_path)
     else: 
         train_qs = None
 
@@ -58,10 +59,9 @@ def addDocs(args, args_valid=None, ax_params=None):
     global time
     global start
     timelist = []
-    max_val =[]
     failed_docs = []
     
-    train_qs, _, embeddings, embeddings_new, classifier_layer = initialize(args.train_q, args.num_qs, args.embeddings_path, args.model_path, args.multiple_queries)
+    train_qs, _, embeddings, embeddings_new, classifier_layer = initialize(args.train_q, args.num_qs, args.embeddings_path, args.model_path, args.train_q_path ,args.multiple_queries)
     if args.num_new_docs is None:
         num_new_embeddings = len(embeddings_new)
         if args.multiple_queries:
@@ -81,13 +81,15 @@ def addDocs(args, args_valid=None, ax_params=None):
         lr = args.lr; lam = args.lam; m1 = args.m1; m2 = args.m2; start_doc = 0
 
     if args.train_q:
-        train_new_ids = joblib.load('/home/cw862/DSI/dsi/train/train_new_ids.pkl')
-        ### the index list to access the train queries from train_newqs
+        train_new_ids = joblib.load(args.train_q_doc_id_map_path)
+        # the index list to access the train queries from train_newqs
         index = train_new_ids.index
-        ### the sorted list of doc_ids
+        # the sorted list of doc_ids
         doc_id = train_new_ids.to_numpy(dtype=int)
 
     added_counter = len(classifier_layer)
+    num_old_docs = len(classifier_layer)
+    embedding_size = classifier_layer.shape[1]
 
     # add rows for the new docs
     classifier_layer = torch.cat((classifier_layer, torch.zeros(num_new_docs, len(classifier_layer[0])).to(classifier_layer.device)))
@@ -101,62 +103,45 @@ def addDocs(args, args_valid=None, ax_params=None):
             print("Failed docs: ", len(failed_docs))
             print(ax_params)
             return 0.0 
-        q = embeddings_new[j]
         if args.init == 'random':
-            x = torch.nn.Linear(768, 1).weight.data.squeeze()
+            x = torch.nn.Linear(embedding_size, 1).weight.data.squeeze()
         elif args.init == 'mean':
             x = torch.mean(classifier_layer[:added_counter],0).clone().detach()
         elif args.init == 'max':
+            q = embeddings_new[j]
             x = classifier_layer[torch.argmax(torch.matmul(classifier_layer[:added_counter], q.to(classifier_layer.device))).item()].clone().detach()        
         x = x.to('cuda')
         x.requires_grad = True
         optimizer = SGD([x], lr=lr)
         embeddings = embeddings.to('cuda')
         classifier_layer = classifier_layer.to('cuda')
-        q = q.to('cuda')
-        doc_now = start_doc + done
-        max_val = torch.max(torch.matmul(classifier_layer[:added_counter], q))
-        if args.train_q: 
-            ### find the positions of the train queries for a specific doc_id in the embeddings matrix
-            train_qpos = numpy.argwhere(doc_id == doc_now + 100001)
-            ### number of train queries corresponded to a doc_id
+        doc_now = start_doc + done        
+        
+        qs = embeddings_new[j:j+args.num_qs]
+        qs = qs.to('cuda')
+        if args.train_q:
+            # find the positions of the train queries for a specific doc_id in the embeddings matrix
+            train_qpos = numpy.argwhere(doc_id == doc_now + num_old_docs)
+            # number of train queries corresponded to a doc_id
             num_trainq = train_qpos.shape[0]
-            ### initialize the train queries matrix
-            train_q = torch.zeros((num_trainq,768))
+            # initialize the train queries matrix
+            train_q = torch.zeros((num_trainq,embedding_size))
             for k in range(num_trainq):
                 train_q[k,:] = train_qs[index[train_qpos[k][0]]]
             train_q = train_q.to('cuda')
-            ### use generated queries and train queries
-            qs = torch.cat((q.unsqueeze(dim=0), train_q))
-            max_vals = [torch.max(torch.matmul(classifier_layer[:added_counter], qs[k])) for k in range(qs.shape[0])]
-        if args.multiple_queries:
-            qs = embeddings_new[j:j+args.num_qs]
-            qs = qs.to('cuda')
-            if args.train_q:
-                train_qpos = numpy.argwhere(doc_id == doc_now + 100001)
-                num_trainq = train_qpos.shape[0]
-                train_q = torch.zeros((num_trainq,768))
-                for k in range(num_trainq):
-                    train_q[k,:] = train_qs[index[train_qpos[k][0]]]
-                train_q = train_q.to('cuda')
-                qs = torch.cat((qs, train_q))
-            max_vals = [torch.max(torch.matmul(classifier_layer[:added_counter], qs[k])) for k in range(qs.shape[0])]
-        
+            # use generated queries and train queries
+            qs = torch.cat((qs, train_q))
+        max_vals = [torch.max(torch.matmul(classifier_layer[:added_counter], qs[k])) for k in range(qs.shape[0])]
 
         start = time.time()
         for i in range(args.lbfgs_iterations):
             x.requires_grad = True
             def closure():
-                if args.multiple_queries or args.train_q:
-                    loss = 0
-                    for k in range(qs.shape[0]):
-                        loss += lam * max(0, (max_vals[k].item()+m1) - (qs[k].unsqueeze(dim=0) @ x).squeeze())
-                    prod = ((x-classifier_layer[:added_counter]) * embeddings[:added_counter]).sum(1) + m2
-                    loss += torch.maximum(prod, torch.zeros(len(prod)).to('cuda')).sum()
-                else:
-                    loss = lam * max(0, (max_val.item()+m1) - (q.unsqueeze(dim=0) @ x).squeeze())
-                    prod = ((x-classifier_layer[:added_counter]) * embeddings[:added_counter]).sum(1) + m2
-                    loss += torch.maximum(prod, torch.zeros(len(prod)).to('cuda')).sum()
+                loss = 0
+                for k in range(qs.shape[0]):
+                    loss += lam * max(0, (max_vals[k].item()+m1) - (qs[k].unsqueeze(dim=0) @ x).squeeze())
+                prod = ((x-classifier_layer[:added_counter]) * embeddings[:added_counter]).sum(1) + m2
+                loss += torch.maximum(prod, torch.zeros(len(prod)).to('cuda')).sum()
 
                 optimizer.zero_grad()
                 loss.backward()
@@ -217,7 +202,7 @@ def get_arguments():
         help='way to initialize the classifier vector')
     parser.add_argument(
         "--embeddings_path", 
-        default='/home/cw862/DSI/dsi/dpr5_olddocs_finetune_0.001_filtered_fixed/gen-embeddings.pkl', 
+        default="/home/cw862/DSI/dsi/dpr5_olddocs_finetune_0.001_filtered_fixed/gen-embeddings.pkl", 
         type=str, 
         help="path to embeddings")
     parser.add_argument(
@@ -225,6 +210,16 @@ def get_arguments():
         default="/home/vk352/dsi/outputs/dpr5_olddocs_finetune_0.001_filtered_fixed/projection_nq320k_epoch17", 
         type=str, 
         help="path to model")
+    parser.add_argument(
+        "--train_q_path", 
+        default="/home/cw862/DSI/dsi/dpr5_olddocs_finetune_0.001_filtered_fixed/train-embeddings.pkl", 
+        type=str, 
+        help="path to train query embeddings")
+    parser.add_argument(
+        "--train_q_doc_id_map_path", 
+        default="/home/cw862/DSI/dsi/train/train_new_ids.pkl", 
+        type=str, 
+        help="path to train query-document id mapping")
     
     args = parser.parse_args()
 
