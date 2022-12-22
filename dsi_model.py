@@ -161,6 +161,12 @@ def get_arguments():
         help="path to saved model",
     )
 
+    parser.add_argument(
+        "--old_docs_only",
+        action="store_true",
+        help="only finetune with old documents",
+    )
+
     args = parser.parse_args()
 
     return args
@@ -331,6 +337,11 @@ def main():
     )['train']
 
     logger.info('test set')
+
+    if args.old_docs_only:
+        train_data = train_data.filter(lambda example: example['doc_id'] <= 100000)
+        val_data = val_data.filter(lambda example: example['doc_id'] <= 100000)
+        generated_queries = generated_queries.filter(lambda example: example['doc_id'] <= 100000)
 
     length_queries = len(generated_queries)
     logger.info('length')

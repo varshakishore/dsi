@@ -267,7 +267,6 @@ def validate(args, model, val_dataloader):
     
             hit_at_1 += (docids == inputs['labels']).sum()
 
-
             max_idxs_5 = torch.argsort(logits, 1, descending=True)[:, :5]
             hit_at_5 += (max_idxs_5 == inputs['labels'].unsqueeze(1)).any(1).sum()
 

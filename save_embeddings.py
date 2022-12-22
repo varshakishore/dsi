@@ -115,7 +115,7 @@ def save(args, model, dataloader, batch_size, dataset_size):
 
 def main():
 
-    print("hallo")
+    print("hello")
 
     ######
 
@@ -205,9 +205,8 @@ def main():
         if args.split == 'gen':
 
         # check if order of samples is 0,0,0,0,0,0,0,0,0,0,1,1,...,109715,109715
-            (labels.numpy() == [x for x in range(109715) for y in range(10)]).all()
+            assert (labels.numpy() == [x for x in range(109715) for y in range(10)]).all()
 
-            import pdb; pdb.set_trace()
             joblib.dump(embedding_matrix, args.output_dir)
         # with open(args.output_dir, 'wb') as f:
         #     pkl.dump(embedding_matrix, f)
