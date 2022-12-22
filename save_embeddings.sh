@@ -1,7 +1,7 @@
 # hyper parameters
 
-output_dir="/home/vk352/dsi/outputs/dpr5_finetune_0.001_filtered_fixed/nq320k_gen_passage_embeddings.pkl"
-model_path="/home/vk352/dsi/outputs/dpr5_finetune_0.001_filtered_fixed/projection_nq320k_epoch15"
+output_dir="/home/vk352/dsi/outputs/dpr5_olddocs_finetune_0.001_filtered_fixed/nq320k_gen_passage_embeddings.pkl"
+model_path="/home/vk352/dsi/outputs/dpr5_olddocs_finetune_0.001_filtered_fixed/projection_nq320k_epoch17"
 
 train_cmd="
 python  save_embeddings.py --output_dir=$output_dir \

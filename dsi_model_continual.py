@@ -267,7 +267,6 @@ def validate(args, model, val_dataloader):
     
             hit_at_1 += (docids == inputs['labels']).sum()
 
-
             max_idxs_5 = torch.argsort(logits, 1, descending=True)[:, :5]
             hit_at_5 += (max_idxs_5 == inputs['labels'].unsqueeze(1)).any(1).sum()
 
@@ -293,7 +292,7 @@ def validate_script(args, new_validation_subset=False):
     if new_validation_subset:
         model.module.classifier.weight.data[-714:] = model.module.classifier.weight.data[class_num_old:class_num_old+714]
         model.module.classifier.weight.data[class_num_old:class_num_old+9000] = model.module.classifier.weight.data[:9000]
-
+    
     hits_at_1, hits_at_5, hits_at_10, mrr_at_10 = validate(args, model, new_val_dataloader)
     length = len(new_val_dataloader.dataset)
     hits_at_1 = hits_at_1/length

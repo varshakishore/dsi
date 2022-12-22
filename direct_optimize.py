@@ -138,10 +138,9 @@ def addDocs(args, args_valid=None, ax_params=None):
 
             loss = optimizer.step(closure)
             if loss == 0: break
-        if loss==0:
-            timelist.append(time.time() - start)
-        else:
-            timelist.append((time.time() - start)*1000)
+        
+        timelist.append(time.time() - start)
+        
         if j % 500 == 0:
             print(f'Done {j} in {time.time() - start} seconds; loss={loss}')
         
@@ -330,7 +329,7 @@ def main():
             {"name": "m2", "type": "range", "bounds": [1e-5, 1.0], "log_scale": True},
         ],
         evaluation_function=partial(addDocs, args, args_valid),
-        objective_name='time',
+        objective_name='val_acc',
         total_trials=30,
         minimize=False,
         )
@@ -358,6 +357,7 @@ def main():
                 f.write(f'm2: {args.m2}\n')
                 print('\n')
                 f.write(f'experiment: {exp_to_df(experiment).to_csv()}\n')
+                f.write(f'-'*100)
     
     print("Adding documents")
     failed_docs, classifier_layer, embeddings, avg_time, timelist = addDocs(args)
@@ -371,23 +371,22 @@ def main():
         joblib.dump(failed_docs, os.path.join(args.write_path_dir, 'failed_docs.pkl'))
         joblib.dump(timelist, os.path.join(args.write_path_dir, 'timelist.pkl'))
         with open(os.path.join(args.write_path_dir, 'log.txt'), 'a') as f:
-            print('\n')
-            print(f'Hyperparameters: lr={args.lr}, m1={args.m1}, m2={args.m2}, lambda={args.lam}\n')
-            print('\n')
+            f.write('\n')
+            f.write(f'Hyperparameters: lr={args.lr}, m1={args.m1}, m2={args.m2}, lambda={args.lam}\n')
+            f.write('\n')
             f.write(f'Num failed docs: {len(failed_docs)}\n')
             f.write(f'Final time: {np.asarray(timelist).sum()}\n')
-            f.write(f'Final time average: {np.asarray(timelist).mean()}\n')
 
     args_valid = get_validation_arguments(os.path.join(args.write_path_dir, 'classifier_layer.pkl'))
     hit_at_1, hit_at_5, hit_at_10, mrr_at_10 = validate_script(args_valid, new_validation_subset=False)
     if args.write_path_dir is not None:
          with open(os.path.join(args.write_path_dir, 'log.txt'), 'a') as f:
-            print('\n')
-            print('Validation results on the new test set: \n')
-            print(f'hit_at_1: {hit_at_1}')
-            print(f'hit_at_5: {hit_at_5}')
-            print(f'hit_at_10: {hit_at_10}')
-            print(f'mrr_at_10: {mrr_at_10}')
+            f.write('\n')
+            f.write('Validation results on the new test set: \n')
+            f.write(f'hit_at_1: {hit_at_1}\n')
+            f.write(f'hit_at_5: {hit_at_5}\n')
+            f.write(f'hit_at_10: {hit_at_10}\n')
+            f.write(f'mrr_at_10: {mrr_at_10}\n')
 
 if __name__ == "__main__":
     main()

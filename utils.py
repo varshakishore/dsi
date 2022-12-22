@@ -78,6 +78,7 @@ def load_mapping(data_dir, out_name):
 
 def load_saved_weights(model, model_path, strict_set=False, load_classifier=True):
     state_dict = torch.load(model_path)
+    # TODO check where this 6 came from
     if len(state_dict.keys()) != 6 and load_classifier:
         # model_to_load = get_model_obj(model)
         model = torch.nn.DataParallel(model)
