@@ -117,7 +117,6 @@ def addDocs(args, args_valid=None, ax_params=None):
         qs = embeddings_new[j:j+args.num_qs]
         qs = qs.to('cuda')
         if args.train_q:
-            import pdb;pdb.set_trace()
             # number of train queries corresponded to a doc_id
             num_trainq = len(docid2trainq[doc_now + num_old_docs])
             # initialize the train queries matrix
