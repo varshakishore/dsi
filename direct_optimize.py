@@ -176,6 +176,48 @@ def addDocs(args, args_valid=None, ax_params=None):
         
     return failed_docs, classifier_layer, embeddings, np.asarray(timelist).mean(), timelist
 
+def validate_on_splits(val_dir,write_path_dir=None):
+    args_valid = get_validation_arguments(os.path.join(val_dir, 'classifier_layer.pkl'))
+    hit_at_1, hit_at_5, hit_at_10, mrr_at_10 = validate_script(args_valid, new_validation_subset=False,split='new_gen')
+    print('Accuracy on new generated queries')
+    print(hit_at_1, hit_at_5, hit_at_10, mrr_at_10)
+
+    if write_path is not None:
+        with open(os.path.join(write_path_dir, 'log.txt'), 'a') as f:
+            f.write('\n')
+            f.write('Accuracy on the new generated queries: \n')
+            f.write(f'hit_at_1: {hit_at_1}\n')
+            f.write(f'hit_at_5: {hit_at_5}\n')
+            f.write(f'hit_at_10: {hit_at_10}\n')
+            f.write(f'mrr_at_10: {mrr_at_10}\n')
+
+
+    hit_at_1, hit_at_5, hit_at_10, mrr_at_10 = validate_script(args_valid, new_validation_subset=False,split='old_val')
+    print('Accuracy on old test queries')
+    print(hit_at_1, hit_at_5, hit_at_10, mrr_at_10)
+
+    if write_path is not None:
+    with open(os.path.join(write_path_dir, 'log.txt'), 'a') as f:
+        f.write('\n')
+        f.write('Accuracy on old test queries: \n')
+        f.write(f'hit_at_1: {hit_at_1}\n')
+        f.write(f'hit_at_5: {hit_at_5}\n')
+        f.write(f'hit_at_10: {hit_at_10}\n')
+        f.write(f'mrr_at_10: {mrr_at_10}\n')
+
+    hit_at_1, hit_at_5, hit_at_10, mrr_at_10 = validate_script(args_valid, new_validation_subset=False,split='new_val')
+    print('Accuracy on new test queries')
+    print(hit_at_1, hit_at_5, hit_at_10, mrr_at_10)
+
+    if write_path is not None:
+    with open(os.path.join(write_path_dir, 'log.txt'), 'a') as f:
+        f.write('\n')
+        f.write('Accuracy on new test queries: \n')
+        f.write(f'hit_at_1: {hit_at_1}\n')
+        f.write(f'hit_at_5: {hit_at_5}\n')
+        f.write(f'hit_at_10: {hit_at_10}\n')
+        f.write(f'mrr_at_10: {mrr_at_10}\n')
+
 def get_arguments():
     parser = argparse.ArgumentParser()
 
@@ -215,7 +257,18 @@ def get_arguments():
         "--train_q_doc_id_map_path", 
         default="/home/cw862/DSI/dsi/train/docid2trainq.pkl", 
         type=str, 
-        help="path to train query-document id mapping")
+        help="path to doc_id to train_qs mapping")
+    parser.add_argument(
+        "--val",
+        action="store_true",
+        help="whether or not just to run the evaluation"
+    )
+    parser.add_argument(
+        "--val_path",
+        default=None,
+        type=str,
+        help="the folder for evaluation"
+    )
     
     args = parser.parse_args()
 
@@ -329,11 +382,10 @@ def main():
     set_seed()
     args = get_arguments()
 
-    # args_valid = get_validation_arguments(os.path.join(args.write_path_dir, 'temp.pkl'))
-    # hit_at_1, hit_at_5, hit_at_10, mrr_at_10 = validate_script(args_valid, new_validation_subset=True)
-    # import pdb; pdb.set_trace()
+    if args.val:
+        validate_on_splits(args.val_path,args.val_path)
 
-    if args.tune_parameters:
+    elif args.tune_parameters:
         print("Tuning parameters")
         os.makedirs(args.write_path_dir, exist_ok=True)
         args_valid = get_validation_arguments(os.path.join(args.write_path_dir, 'temp.pkl'))
@@ -395,16 +447,8 @@ def main():
             f.write(f'Num failed docs: {len(failed_docs)}\n')
             f.write(f'Final time: {np.asarray(timelist).sum()}\n')
 
-    args_valid = get_validation_arguments(os.path.join(args.write_path_dir, 'classifier_layer.pkl'))
-    hit_at_1, hit_at_5, hit_at_10, mrr_at_10 = validate_script(args_valid, new_validation_subset=False)
-    if args.write_path_dir is not None:
-         with open(os.path.join(args.write_path_dir, 'log.txt'), 'a') as f:
-            f.write('\n')
-            f.write('Validation results on the new test set: \n')
-            f.write(f'hit_at_1: {hit_at_1}\n')
-            f.write(f'hit_at_5: {hit_at_5}\n')
-            f.write(f'hit_at_10: {hit_at_10}\n')
-            f.write(f'mrr_at_10: {mrr_at_10}\n')
+        validate_on_splits(args.write_path_dir,args.write_path_dir)
+
 
 if __name__ == "__main__":
     main()
