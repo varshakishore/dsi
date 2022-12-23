@@ -81,11 +81,8 @@ def addDocs(args, args_valid=None, ax_params=None):
         lr = args.lr; lam = args.lam; m1 = args.m1; m2 = args.m2; start_doc = 0
 
     if args.train_q:
-        train_new_ids = joblib.load(args.train_q_doc_id_map_path)
-        # the index list to access the train queries from train_newqs
-        index = train_new_ids.index
-        # the sorted list of doc_ids
-        doc_id = train_new_ids.to_numpy(dtype=int)
+        # mapping from doc_id to position in the train_q embedding matrix
+        docid2trainq = joblib.load(args.train_q_doc_id_map_path)
 
     added_counter = len(classifier_layer)
     num_old_docs = len(classifier_layer)
@@ -120,14 +117,13 @@ def addDocs(args, args_valid=None, ax_params=None):
         qs = embeddings_new[j:j+args.num_qs]
         qs = qs.to('cuda')
         if args.train_q:
-            # find the positions of the train queries for a specific doc_id in the embeddings matrix
-            train_qpos = numpy.argwhere(doc_id == doc_now + num_old_docs)
+            import pdb;pdb.set_trace()
             # number of train queries corresponded to a doc_id
-            num_trainq = train_qpos.shape[0]
+            num_trainq = len(docid2trainq[doc_now + num_old_docs])
             # initialize the train queries matrix
             train_q = torch.zeros((num_trainq,embedding_size))
             for k in range(num_trainq):
-                train_q[k,:] = train_qs[index[train_qpos[k][0]]]
+                train_q[k,:] = train_qs[docid2trainq[doc_now + num_old_docs][k]]
             train_q = train_q.to('cuda')
             # use generated queries and train queries
             qs = torch.cat((qs, train_q))
@@ -217,7 +213,7 @@ def get_arguments():
         help="path to train query embeddings")
     parser.add_argument(
         "--train_q_doc_id_map_path", 
-        default="/home/cw862/DSI/dsi/train/train_new_ids.pkl", 
+        default="/home/cw862/DSI/dsi/train/docid2trainq.pkl", 
         type=str, 
         help="path to train query-document id mapping")
     
