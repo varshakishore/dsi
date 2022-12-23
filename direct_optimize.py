@@ -185,7 +185,7 @@ def validate_on_splits(val_dir,write_path_dir=None):
     if write_path is not None:
         with open(os.path.join(write_path_dir, 'log.txt'), 'a') as f:
             f.write('\n')
-            f.write('Accuracy on the new generated queries: \n')
+            f.write('Accuracy on new generated queries: \n')
             f.write(f'hit_at_1: {hit_at_1}\n')
             f.write(f'hit_at_5: {hit_at_5}\n')
             f.write(f'hit_at_10: {hit_at_10}\n')
@@ -197,26 +197,26 @@ def validate_on_splits(val_dir,write_path_dir=None):
     print(hit_at_1, hit_at_5, hit_at_10, mrr_at_10)
 
     if write_path is not None:
-    with open(os.path.join(write_path_dir, 'log.txt'), 'a') as f:
-        f.write('\n')
-        f.write('Accuracy on old test queries: \n')
-        f.write(f'hit_at_1: {hit_at_1}\n')
-        f.write(f'hit_at_5: {hit_at_5}\n')
-        f.write(f'hit_at_10: {hit_at_10}\n')
-        f.write(f'mrr_at_10: {mrr_at_10}\n')
+        with open(os.path.join(write_path_dir, 'log.txt'), 'a') as f:
+            f.write('\n')
+            f.write('Accuracy on old test queries: \n')
+            f.write(f'hit_at_1: {hit_at_1}\n')
+            f.write(f'hit_at_5: {hit_at_5}\n')
+            f.write(f'hit_at_10: {hit_at_10}\n')
+            f.write(f'mrr_at_10: {mrr_at_10}\n')
 
     hit_at_1, hit_at_5, hit_at_10, mrr_at_10 = validate_script(args_valid, new_validation_subset=False,split='new_val')
     print('Accuracy on new test queries')
     print(hit_at_1, hit_at_5, hit_at_10, mrr_at_10)
 
     if write_path is not None:
-    with open(os.path.join(write_path_dir, 'log.txt'), 'a') as f:
-        f.write('\n')
-        f.write('Accuracy on new test queries: \n')
-        f.write(f'hit_at_1: {hit_at_1}\n')
-        f.write(f'hit_at_5: {hit_at_5}\n')
-        f.write(f'hit_at_10: {hit_at_10}\n')
-        f.write(f'mrr_at_10: {mrr_at_10}\n')
+        with open(os.path.join(write_path_dir, 'log.txt'), 'a') as f:
+            f.write('\n')
+            f.write('Accuracy on new test queries: \n')
+            f.write(f'hit_at_1: {hit_at_1}\n')
+            f.write(f'hit_at_5: {hit_at_5}\n')
+            f.write(f'hit_at_10: {hit_at_10}\n')
+            f.write(f'mrr_at_10: {mrr_at_10}\n')
 
 def get_arguments():
     parser = argparse.ArgumentParser()
