@@ -394,7 +394,7 @@ def main():
         best_parameters, values, experiment, model = optimize(
         parameters=[
             {"name": "lr", "type": "range", "bounds": [1e-6, 0.4], "log_scale": True},
-            {"name": "lambda", "type": "range", "bounds": [1, 500], "log_scale": True},
+            {"name": "lambda", "type": "range", "bounds": [1, 20], "log_scale": True},
             {"name": "m1", "type": "range", "bounds": [1e-5, 1.0], "log_scale": True},
             {"name": "m2", "type": "range", "bounds": [1e-5, 1.0], "log_scale": True},
         ],
