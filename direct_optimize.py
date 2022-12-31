@@ -181,7 +181,7 @@ def validate_on_splits(val_dir,write_path_dir=None):
     print('Accuracy on new generated queries')
     print(hit_at_1, hit_at_5, hit_at_10, mrr_at_10)
 
-    if write_path is not None:
+    if write_path_dir is not None:
         with open(os.path.join(write_path_dir, 'log.txt'), 'a') as f:
             f.write('\n')
             f.write('Accuracy on new generated queries: \n')
@@ -195,7 +195,7 @@ def validate_on_splits(val_dir,write_path_dir=None):
     print('Accuracy on old test queries')
     print(hit_at_1, hit_at_5, hit_at_10, mrr_at_10)
 
-    if write_path is not None:
+    if write_path_dir is not None:
         with open(os.path.join(write_path_dir, 'log.txt'), 'a') as f:
             f.write('\n')
             f.write('Accuracy on old test queries: \n')
@@ -208,7 +208,7 @@ def validate_on_splits(val_dir,write_path_dir=None):
     print('Accuracy on new test queries')
     print(hit_at_1, hit_at_5, hit_at_10, mrr_at_10)
 
-    if write_path is not None:
+    if write_path_dir is not None:
         with open(os.path.join(write_path_dir, 'log.txt'), 'a') as f:
             f.write('\n')
             f.write('Accuracy on new test queries: \n')
