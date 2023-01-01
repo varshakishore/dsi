@@ -87,6 +87,11 @@ def addDocs(args, args_valid=None, ax_params=None):
         # mapping from doc_id to position in the train_q embedding matrix
         docid2trainq = joblib.load(args.train_q_doc_id_map_path)
 
+    # if adding noise to the query embeddings, add no margin 
+    if args.add_noise:
+        m1 = 0
+        m2 = 0
+
     added_counter = len(classifier_layer)
     num_old_docs = len(classifier_layer)
     embedding_size = classifier_layer.shape[1]
@@ -189,7 +194,7 @@ def validate_on_splits(val_dir,write_path_dir=None):
     print('Accuracy on new generated queries')
     print(hit_at_1, hit_at_5, hit_at_10, mrr_at_10)
 
-    if write_path is not None:
+    if write_path_dir is not None:
         with open(os.path.join(write_path_dir, 'log.txt'), 'a') as f:
             f.write('\n')
             f.write('Accuracy on new generated queries: \n')
@@ -203,7 +208,7 @@ def validate_on_splits(val_dir,write_path_dir=None):
     print('Accuracy on old test queries')
     print(hit_at_1, hit_at_5, hit_at_10, mrr_at_10)
 
-    if write_path is not None:
+    if write_path_dir is not None:
         with open(os.path.join(write_path_dir, 'log.txt'), 'a') as f:
             f.write('\n')
             f.write('Accuracy on old test queries: \n')
@@ -216,7 +221,7 @@ def validate_on_splits(val_dir,write_path_dir=None):
     print('Accuracy on new test queries')
     print(hit_at_1, hit_at_5, hit_at_10, mrr_at_10)
 
-    if write_path is not None:
+    if write_path_dir is not None:
         with open(os.path.join(write_path_dir, 'log.txt'), 'a') as f:
             f.write('\n')
             f.write('Accuracy on new test queries: \n')
@@ -235,7 +240,7 @@ def get_arguments():
     parser.add_argument("--num_new_docs", default=None, type=int, help="number of new documents to add")
     parser.add_argument("--lbfgs_iterations", default=1000, type=int, help="number of iterations for lbfgs")
     parser.add_argument("--trials", default=30, type=int, help="number of trials to run for hyperparameter tuning")
-    parser.add_argument("--write_path_dir", default=None, type=str, required=True, help="path to write classifier layer to")
+    parser.add_argument("--write_path_dir", default=None, type=str, help="path to write classifier layer to")
     parser.add_argument("--tune_parameters", action="store_true", help="flag for tune parameters")
     parser.add_argument("--multiple_queries", action="store_true", help="flag for multiple_queries")
     parser.add_argument("--num_qs", default=5, type=int, help="number of generated queries to use")
@@ -393,8 +398,9 @@ def main():
 
     if args.val:
         validate_on_splits(args.val_path,args.val_path)
+        return 
 
-    elif args.tune_parameters:
+    if args.tune_parameters:
         print("Tuning parameters")
         os.makedirs(args.write_path_dir, exist_ok=True)
         args_valid = get_validation_arguments(os.path.join(args.write_path_dir, 'temp.pkl'))
