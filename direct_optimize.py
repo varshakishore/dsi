@@ -55,6 +55,9 @@ def initialize(train_q,
 
     return train_qs, sentence_embeddings, embeddings, embeddings_new, classifier_layer
 
+def add_noise(x, scale):
+    return x + torch.rand(x.shape[0],x.shape[1]) * torch.norm(x, dim=1)[:, None] * scale
+
 def addDocs(args, args_valid=None, ax_params=None):
     global time
     global start
@@ -115,6 +118,9 @@ def addDocs(args, args_valid=None, ax_params=None):
         doc_now = start_doc + done        
         
         qs = embeddings_new[j:j+args.num_qs]
+        if args.add_noise:
+            # scale the added noise according to the norm of the embeddings and the noise scale we want
+            qs = add_noise(qs, args.noise_scale)
         qs = qs.to('cuda')
         if args.train_q:
             # number of train queries corresponded to a doc_id
@@ -123,6 +129,8 @@ def addDocs(args, args_valid=None, ax_params=None):
             train_q = torch.zeros((num_trainq,embedding_size))
             for k in range(num_trainq):
                 train_q[k,:] = train_qs[docid2trainq[doc_now + num_old_docs][k]]
+            if args.add_noise:
+                train_q = add_noise(train_q, args.noise_scale)
             train_q = train_q.to('cuda')
             # use generated queries and train queries
             qs = torch.cat((qs, train_q))
@@ -232,6 +240,8 @@ def get_arguments():
     parser.add_argument("--multiple_queries", action="store_true", help="flag for multiple_queries")
     parser.add_argument("--num_qs", default=5, type=int, help="number of generated queries to use")
     parser.add_argument("--train_q", action="store_true", help="if we are using train queries to add documents")
+    parser.add_argument("--add_noise", action="store_true", help="add noise to query embeddings when adding document")
+    parser.add_argument("--noise_scale", default="0.001", type=float, help="how much noise to add to the query embeddings")
     parser.add_argument(
         "--init", 
         default='random', 
