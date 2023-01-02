@@ -140,7 +140,6 @@ def addDocs(args, args_valid=None, ax_params=None):
             train_q = train_q.to('cuda')
             # use generated queries and train queries
             qs = torch.cat((qs, train_q))
-        max_vals = [torch.max(torch.matmul(classifier_layer[:added_counter], qs[k])) for k in range(qs.shape[0])]
 
         start = time.time()
         for i in range(args.lbfgs_iterations):
@@ -148,7 +147,14 @@ def addDocs(args, args_valid=None, ax_params=None):
             def closure():
                 loss = 0
                 for k in range(qs.shape[0]):
-                    loss += lam * max(0, (max_vals[k].item()+m1) - (qs[k].unsqueeze(dim=0) @ x).squeeze())
+                    prod_to_old = torch.matmul(classifier_layer[:added_counter], qs[k])
+                    if args.symmetric_loss:
+                        # take the non-zero product of query embedding and classifier layer
+                        filtered_loss = torch.where(prod_to_old>0, prod_to_old, 0.)
+                        loss += torch.sum(filtered_loss)
+                    else:
+                        max_vals = [torch.max(prod_to_old) for k in range(qs.shape[0])]
+                        loss += lam * max(0, (max_vals[k].item()+m1) - (qs[k].unsqueeze(dim=0) @ x).squeeze())
                 prod = ((x-classifier_layer[:added_counter]) * embeddings[:added_counter]).sum(1) + m2
                 loss += torch.maximum(prod, torch.zeros(len(prod)).to('cuda')).sum()
 
@@ -249,6 +255,7 @@ def get_arguments():
     parser.add_argument("--add_noise", action="store_true", help="add noise to query embeddings when adding document")
     parser.add_argument("--add_noise_w_margin", action="store_true", help="add noise and keep the margin")
     parser.add_argument("--noise_scale", default="0.001", type=float, help="how much noise to add to the query embeddings")
+    parser.add_argument("--symmetric_loss", action="store_true", help="loss from the two terms are symmetric")
     parser.add_argument("--min_old_q", action="store_true", help="uses the old query with the tightest constraint")
 
     parser.add_argument(
@@ -438,6 +445,22 @@ def main():
             total_trials=args.trials,
             minimize=False,
             )
+
+        elif args.symmetric_loss:
+            best_parameters, values, experiment, model = optimize(
+            parameters=[
+                {"name": "lr", "type": "range", "bounds": [1e-6, 0.4], "log_scale": True},
+                {"name": "lambda", "type": "fixed", "value": 1., "log_scale": True},
+                {"name": "m1", "type": "range", "bounds": [1e-5, 1.0], "log_scale": True},
+                {"name": "m2", "type": "range", "bounds": [1e-5, 1.0], "log_scale": True},
+                {"name": "noise_scale", "type": "fixed", "value": 0.0, "log_scale": False}
+            ],
+            evaluation_function=partial(addDocs, args, args_valid),
+            objective_name='val_acc',
+            total_trials=args.trials,
+            minimize=False,
+            )
+
 
         else:
             # ax optimize
