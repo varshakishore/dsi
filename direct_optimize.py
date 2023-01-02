@@ -247,6 +247,7 @@ def get_arguments():
     parser.add_argument("--num_qs", default=10, type=int, help="number of generated queries to use")
     parser.add_argument("--train_q", action="store_true", help="if we are using train queries to add documents")
     parser.add_argument("--add_noise", action="store_true", help="add noise to query embeddings when adding document")
+    parser.add_argument("--add_noise_w_margin", action="store_true", help="add noise and keep the margin")
     parser.add_argument("--noise_scale", default="0.001", type=float, help="how much noise to add to the query embeddings")
     parser.add_argument("--min_old_q", action="store_true", help="uses the old query with the tightest constraint")
 
@@ -415,6 +416,21 @@ def main():
                 {"name": "lambda", "type": "range", "bounds": [1, 20], "log_scale": True},
                 {"name": "m1", "type": "fixed", "value": 0.0, "log_scale": False},
                 {"name": "m2", "type": "fixed", "value": 0.0, "log_scale": False},
+                {"name": "noise_scale", "type": "range", "bounds": [1e-3, 1.0], "log_scale": True}
+            ],
+            evaluation_function=partial(addDocs, args, args_valid),
+            objective_name='val_acc',
+            total_trials=args.trials,
+            minimize=False,
+            )
+        
+        elif args.add_noise_w_margin:
+            best_parameters, values, experiment, model = optimize(
+            parameters=[
+                {"name": "lr", "type": "range", "bounds": [1e-6, 0.4], "log_scale": True},
+                {"name": "lambda", "type": "range", "bounds": [1, 20], "log_scale": True},
+                {"name": "m1", "type": "range", "bounds": [1e-5, 1.0], "log_scale": True},
+                {"name": "m2", "type": "range", "bounds": [1e-5, 1.0], "log_scale": True},
                 {"name": "noise_scale", "type": "range", "bounds": [1e-3, 1.0], "log_scale": True}
             ],
             evaluation_function=partial(addDocs, args, args_valid),
