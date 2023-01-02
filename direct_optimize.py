@@ -80,22 +80,18 @@ def addDocs(args, args_valid=None, ax_params=None):
         num_new_docs = args.num_new_docs
 
     if ax_params:
-        lr = ax_params['lr']; lam = ax_params['lambda']; m1 = ax_params['m1']; m2 = ax_params['m2']
+        lr = ax_params['lr']; lam = ax_params['lambda']; m1 = ax_params['m1']; m2 = ax_params['m2']; noise_scale = ax_params['noise_scale']
         # num_new_docs = 500
         start_doc = 9000
         print("Using hyperparameters:")
         print(ax_params)
     else:
-        lr = args.lr; lam = args.lam; m1 = args.m1; m2 = args.m2; start_doc = 0
+        lr = args.lr; lam = args.lam; m1 = args.m1; m2 = args.m2; noise_scale = args.noise_scale; start_doc = 0; 
 
     if args.train_q:
         # mapping from doc_id to position in the train_q embedding matrix
         docid2trainq = joblib.load(args.train_q_doc_id_map_path)
 
-    # if adding noise to the query embeddings, add no margin 
-    if args.add_noise:
-        m1 = 0
-        m2 = 0
 
     added_counter = len(classifier_layer)
     num_old_docs = len(classifier_layer)
@@ -130,7 +126,7 @@ def addDocs(args, args_valid=None, ax_params=None):
         qs = embeddings_new[j:j+args.num_qs]
         if args.add_noise:
             # scale the added noise according to the norm of the embeddings and the noise scale we want
-            qs = add_noise(qs, args.noise_scale)
+            qs = add_noise(qs, noise_scale)
         qs = qs.to('cuda')
         if args.train_q:
             # number of train queries corresponded to a doc_id
@@ -140,7 +136,7 @@ def addDocs(args, args_valid=None, ax_params=None):
             for k in range(num_trainq):
                 train_q[k,:] = train_qs[docid2trainq[doc_now + num_old_docs][k]]
             if args.add_noise:
-                train_q = add_noise(train_q, args.noise_scale)
+                train_q = add_noise(train_q, noise_scale)
             train_q = train_q.to('cuda')
             # use generated queries and train queries
             qs = torch.cat((qs, train_q))
@@ -412,19 +408,36 @@ def main():
         os.makedirs(args.write_path_dir, exist_ok=True)
         args_valid = get_validation_arguments(os.path.join(args.write_path_dir, 'temp.pkl'))
 
-        # ax optimize
-        best_parameters, values, experiment, model = optimize(
-        parameters=[
-            {"name": "lr", "type": "range", "bounds": [1e-6, 0.4], "log_scale": True},
-            {"name": "lambda", "type": "range", "bounds": [1, 20], "log_scale": True},
-            {"name": "m1", "type": "range", "bounds": [1e-5, 1.0], "log_scale": True},
-            {"name": "m2", "type": "range", "bounds": [1e-5, 1.0], "log_scale": True},
-        ],
-        evaluation_function=partial(addDocs, args, args_valid),
-        objective_name='val_acc',
-        total_trials=args.trials,
-        minimize=False,
-        )
+        if args.add_noise:
+            best_parameters, values, experiment, model = optimize(
+            parameters=[
+                {"name": "lr", "type": "range", "bounds": [1e-6, 0.4], "log_scale": True},
+                {"name": "lambda", "type": "range", "bounds": [1, 20], "log_scale": True},
+                {"name": "m1", "type": "fixed", "value": 0.0, "log_scale": False},
+                {"name": "m2", "type": "fixed", "value": 0.0, "log_scale": False},
+                {"name": "noise_scale", "type": "range", "bounds": [1e-3, 1.0], "log_scale": True}
+            ],
+            evaluation_function=partial(addDocs, args, args_valid),
+            objective_name='val_acc',
+            total_trials=args.trials,
+            minimize=False,
+            )
+
+        else:
+            # ax optimize
+            best_parameters, values, experiment, model = optimize(
+            parameters=[
+                {"name": "lr", "type": "range", "bounds": [1e-6, 0.4], "log_scale": True},
+                {"name": "lambda", "type": "range", "bounds": [1, 20], "log_scale": True},
+                {"name": "m1", "type": "range", "bounds": [1e-5, 1.0], "log_scale": True},
+                {"name": "m2", "type": "range", "bounds": [1e-5, 1.0], "log_scale": True},
+                {"name": "noise_scale", "type": "fixed", "value": 0.0, "log_scale": False }
+            ],
+            evaluation_function=partial(addDocs, args, args_valid),
+            objective_name='val_acc',
+            total_trials=args.trials,
+            minimize=False,
+            )
 
         print(exp_to_df(experiment)) 
         print(f'best_parameters')
@@ -432,11 +445,13 @@ def main():
         print(f'lambda: {best_parameters["lambda"]}')
         print(f'm1: {best_parameters["m1"]}')
         print(f'm2: {best_parameters["m2"]}')
+        print(f'noise_scale: {best_parameters["noise_scale"]}')
 
         args.lr = best_parameters['lr']
         args.lam = best_parameters['lambda']
         args.m1 = best_parameters['m1']
         args.m2 = best_parameters['m2']
+        args.noise_scale = best_parameters['noise_scale']
 
         if args.write_path_dir is not None:
             print("Writing to directory: ", args.write_path_dir)
@@ -447,6 +462,7 @@ def main():
                 f.write(f'lambda: {args.lam}\n')
                 f.write(f'm1: {args.m1}\n')
                 f.write(f'm2: {args.m2}\n')
+                f.write(f'noise_scale: {args.noise_scale}\n')
                 f.write('\n')
                 f.write(f'experiment: {exp_to_df(experiment).to_csv()}\n')
                 f.write(f'-'*100)
@@ -464,7 +480,7 @@ def main():
         joblib.dump(timelist, os.path.join(args.write_path_dir, 'timelist.pkl'))
         with open(os.path.join(args.write_path_dir, 'log.txt'), 'a') as f:
             f.write('\n')
-            f.write(f'Hyperparameters: lr={args.lr}, m1={args.m1}, m2={args.m2}, lambda={args.lam}\n')
+            f.write(f'Hyperparameters: lr={args.lr}, m1={args.m1}, m2={args.m2}, lambda={args.lam}, noise_scale={args.noise_scale}\n')
             f.write('\n')
             f.write(f'Num failed docs: {len(failed_docs)}\n')
             f.write(f'Final time: {np.asarray(timelist).sum()}\n')
