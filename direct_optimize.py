@@ -27,7 +27,8 @@ def initialize(train_q,
                 embeddings_path, 
                 model_path,
                 train_q_path=None,
-                multiple_queries=False):
+                multiple_queries=False,
+                min_old_q=False):
     set_seed()
     sentence_embeddings = joblib.load(embeddings_path)
     class_num = 100001
@@ -41,6 +42,10 @@ def initialize(train_q,
         embeddings_new = sentence_embeddings[1000010:][::10]
     else:
         embeddings = sentence_embeddings[:1000010][::10]
+        if min_old_q:
+            for i in tqdm(range(100001)):
+                min_idx = torch.matmul(sentence_embeddings[i*10:(i+1)*10],classifier_layer[i].to(sentence_embeddings.device)).argmin()
+                embeddings[i] = sentence_embeddings[(i*10)+min_idx]
         num_new_docs = 9714
         embeddings_new = torch.zeros(num_new_docs * num_qs, 768)
         all_embeddings_new = sentence_embeddings[1000010:]
@@ -61,7 +66,7 @@ def addDocs(args, args_valid=None, ax_params=None):
     timelist = []
     failed_docs = []
     
-    train_qs, _, embeddings, embeddings_new, classifier_layer = initialize(args.train_q, args.num_qs, args.embeddings_path, args.model_path, args.train_q_path ,args.multiple_queries)
+    train_qs, _, embeddings, embeddings_new, classifier_layer = initialize(args.train_q, args.num_qs, args.embeddings_path, args.model_path, args.train_q_path ,args.multiple_queries, args.min_old_q)
     if args.num_new_docs is None:
         num_new_embeddings = len(embeddings_new)
         if args.multiple_queries:
@@ -230,8 +235,9 @@ def get_arguments():
     parser.add_argument("--write_path_dir", default=None, type=str, required=True, help="path to write classifier layer to")
     parser.add_argument("--tune_parameters", action="store_true", help="flag for tune parameters")
     parser.add_argument("--multiple_queries", action="store_true", help="flag for multiple_queries")
-    parser.add_argument("--num_qs", default=5, type=int, help="number of generated queries to use")
+    parser.add_argument("--num_qs", default=10, type=int, help="number of generated queries to use")
     parser.add_argument("--train_q", action="store_true", help="if we are using train queries to add documents")
+    parser.add_argument("--min_old_q", action="store_true", help="uses the old query with the tightest constraint")
     parser.add_argument(
         "--init", 
         default='random', 
