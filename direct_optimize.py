@@ -140,21 +140,22 @@ def addDocs(args, args_valid=None, ax_params=None):
             train_q = train_q.to('cuda')
             # use generated queries and train queries
             qs = torch.cat((qs, train_q))
+        # compute max document score for each query
+        max_vals = torch.max(torch.einsum('nd,md->nm', classifier_layer[:added_counter], qs), dim=0).values
 
         start = time.time()
         for i in range(args.lbfgs_iterations):
             x.requires_grad = True
             def closure():
                 loss = 0
-                for k in range(qs.shape[0]):
-                    prod_to_old = torch.matmul(classifier_layer[:added_counter], qs[k])
-                    if args.symmetric_loss:
+                if args.symmetric_loss:
+                    for k in range(qs.shape[0]):
+                        prod_to_old = torch.matmul(classifier_layer[:added_counter], qs[k])                    
                         # take the non-zero product of query embedding and classifier layer
                         filtered_loss = torch.where(prod_to_old>0, prod_to_old, 0.)
-                        loss += torch.sum(filtered_loss)
-                    else:
-                        max_vals = [torch.max(prod_to_old) for k in range(qs.shape[0])]
-                        loss += lam * max(0, (max_vals[k].item()+m1) - (qs[k].unsqueeze(dim=0) @ x).squeeze())
+                        loss += torch.sum(filtered_loss)                            
+                else:
+                    loss += lam * torch.sum(torch.nn.functional.relu((max_vals+m1) - torch.einsum('md,d->m',qs, x)))
                 prod = ((x-classifier_layer[:added_counter]) * embeddings[:added_counter]).sum(1) + m2
                 loss += torch.maximum(prod, torch.zeros(len(prod)).to('cuda')).sum()
 
