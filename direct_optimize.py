@@ -61,7 +61,7 @@ def initialize(train_q,
     return train_qs, sentence_embeddings, embeddings, embeddings_new, classifier_layer
 
 def add_noise(x, scale):
-    return x + torch.rand(x.shape[0],x.shape[1]) * torch.norm(x, dim=1)[:, None] * scale
+    return x + torch.randn(x.shape[0],x.shape[1]) * torch.norm(x, dim=1)[:, None] * scale
 
 def addDocs(args, args_valid=None, ax_params=None):
     global time
