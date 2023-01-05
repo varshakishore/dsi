@@ -124,9 +124,6 @@ def addDocs(args, args_valid=None, ax_params=None):
         doc_now = start_doc + done        
         
         qs = embeddings_new[j:j+args.num_qs]
-        if args.add_noise:
-            # scale the added noise according to the norm of the embeddings and the noise scale we want
-            qs = add_noise(qs, noise_scale)
         qs = qs.to('cuda')
         if args.train_q:
             # number of train queries corresponded to a doc_id
@@ -135,8 +132,6 @@ def addDocs(args, args_valid=None, ax_params=None):
             train_q = torch.zeros((num_trainq,embedding_size))
             for k in range(num_trainq):
                 train_q[k,:] = train_qs[docid2trainq[doc_now + num_old_docs][k]]
-            if args.add_noise:
-                train_q = add_noise(train_q, noise_scale)
             train_q = train_q.to('cuda')
             # use generated queries and train queries
             qs = torch.cat((qs, train_q))
@@ -148,11 +143,14 @@ def addDocs(args, args_valid=None, ax_params=None):
             x.requires_grad = True
             def closure():
                 loss = 0
+                if args.add_noise:
+                    # add Gaussian noise in each iteration of the optimization problem
+                    qs = add_noise(qs, noise_scale)
                 if args.symmetric_loss:
                     for k in range(qs.shape[0]):
                         prod_to_old = torch.matmul(classifier_layer[:added_counter], qs[k])                    
                         # take the non-zero product of query embedding and classifier layer
-                        filtered_loss = torch.where(prod_to_old>0, prod_to_old, 0.)
+                        filtered_loss = torch.where(prod_to_old > 0, prod_to_old, torch.tensor([0.]).to('cuda'))
                         loss += torch.sum(filtered_loss)                            
                 else:
                     loss += lam * torch.sum(torch.nn.functional.relu((max_vals+m1) - torch.einsum('md,d->m',qs, x)))
