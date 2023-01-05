@@ -61,7 +61,7 @@ def initialize(train_q,
     return train_qs, sentence_embeddings, embeddings, embeddings_new, classifier_layer
 
 def add_noise(x, scale):
-    return x + torch.randn(x.shape[0],x.shape[1]) * torch.norm(x, dim=1)[:, None] * scale
+    return x + torch.randn(x.shape[0],x.shape[1]).to('cuda') * torch.norm(x, dim=1)[:, None] * scale
 
 def addDocs(args, args_valid=None, ax_params=None):
     global time
@@ -138,14 +138,16 @@ def addDocs(args, args_valid=None, ax_params=None):
         # compute max document score for each query
         max_vals = torch.max(torch.einsum('nd,md->nm', classifier_layer[:added_counter], qs), dim=0).values
 
+        # prepare an original query for adding noise
+        qs_orig = torch.clone(qs)
+
         start = time.time()
         for i in range(args.lbfgs_iterations):
+            if args.add_noise:
+                qs = add_noise(qs_orig, noise_scale)
             x.requires_grad = True
             def closure():
                 loss = 0
-                if args.add_noise:
-                    # add Gaussian noise in each iteration of the optimization problem
-                    qs = add_noise(qs, noise_scale)
                 if args.symmetric_loss:
                     for k in range(qs.shape[0]):
                         prod_to_old = torch.matmul(classifier_layer[:added_counter], qs[k])                    
