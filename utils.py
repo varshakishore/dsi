@@ -106,3 +106,11 @@ def save_checkpoint(args, model, epoch) -> str:
 
 def get_model_obj(model: nn.Module):
     return model.module if hasattr(model, 'module') else model
+
+def num_to_groups(num, divisor):
+    groups = num // divisor
+    remainder = num % divisor
+    arr = [divisor] * groups
+    if remainder > 0:
+        arr.append(remainder)
+    return arr

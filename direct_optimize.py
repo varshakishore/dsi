@@ -102,7 +102,9 @@ def addDocs(args, args_valid=None, ax_params=None):
     embeddings = torch.cat((embeddings, torch.zeros(num_new_docs, len(classifier_layer[0]))))
 
     step = args.num_qs if args.multiple_queries else 1
-    for done, j in tqdm(enumerate(range(start_doc*step, num_new_embeddings, step))):
+    batches = [b//step for b in num_to_groups((num_new_embeddings-start_doc*step), args.train_batch_size*step)]
+    for done, j in enumerate(tqdm(range(start_doc*step, num_new_embeddings, step*args.train_batch_size))):
+        curr_batch_size = batches[done]
         # this set of hyperparameters is not working
         if len(timelist) == 50 and len(failed_docs) >= 25 and ax_params: 
             print("Bad hyperparameters, skipping...")
@@ -110,25 +112,29 @@ def addDocs(args, args_valid=None, ax_params=None):
             print(ax_params)
             return 0.0 
         if args.init == 'random':
-            x = torch.nn.Linear(embedding_size, 1).weight.data.squeeze()
+            x = torch.nn.Linear(embedding_size, curr_batch_size).weight.data
         elif args.init == 'mean':
-            x = torch.mean(classifier_layer[:added_counter],0).clone().detach()
+            x = torch.mean(classifier_layer[:added_counter],0).clone().detach().unsqueeze(0)
         elif args.init == 'max':
             q = embeddings_new[j]
-            x = classifier_layer[torch.argmax(torch.matmul(classifier_layer[:added_counter], q.to(classifier_layer.device))).item()].clone().detach()        
+            x = classifier_layer[torch.argmax(torch.matmul(classifier_layer[:added_counter], q.to(classifier_layer.device))).item()].clone().detach().unsqueeze(0)    
+        assert len(x.shape) == 2, f'x must be of size (batch, dim), current size is {x.shape}'
         x = x.to('cuda')
         x.requires_grad = True
         optimizer = SGD([x], lr=lr)
         embeddings = embeddings.to('cuda')
         classifier_layer = classifier_layer.to('cuda')
-        doc_now = start_doc + done        
+        doc_now = start_doc + done*args.train_batch_size        
         
-        qs = embeddings_new[j:j+args.num_qs]
+        qs = embeddings_new[j:j+args.num_qs*args.train_batch_size]
+        qs = torch.reshape(qs, (curr_batch_size, args.num_qs, qs.shape[-1]))
         if args.add_noise:
             # scale the added noise according to the norm of the embeddings and the noise scale we want
             qs = add_noise(qs, noise_scale)
         qs = qs.to('cuda')
         if args.train_q:
+            raise NotImplementedError
+            assert args.train_batch_size == 1, 'Batching is currently not supported when using training queries'
             # number of train queries corresponded to a doc_id
             num_trainq = len(docid2trainq[doc_now + num_old_docs])
             # initialize the train queries matrix
@@ -141,7 +147,7 @@ def addDocs(args, args_valid=None, ax_params=None):
             # use generated queries and train queries
             qs = torch.cat((qs, train_q))
         # compute max document score for each query
-        max_vals = torch.max(torch.einsum('nd,md->nm', classifier_layer[:added_counter], qs), dim=0).values
+        max_vals = torch.max(torch.einsum('nd,bmd->bnm', classifier_layer[:added_counter], qs), dim=1).values
 
         start = time.time()
         for i in range(args.lbfgs_iterations):
@@ -155,36 +161,38 @@ def addDocs(args, args_valid=None, ax_params=None):
                         filtered_loss = torch.where(prod_to_old>0, prod_to_old, 0.)
                         loss += torch.sum(filtered_loss)                            
                 else:
-                    loss += lam * torch.sum(torch.nn.functional.relu((max_vals+m1) - torch.einsum('md,d->m',qs, x)))
-                prod = ((x-classifier_layer[:added_counter]) * embeddings[:added_counter]).sum(1) + m2
-                loss += torch.maximum(prod, torch.zeros(len(prod)).to('cuda')).sum()
+                    loss += lam * torch.sum(torch.nn.functional.relu((max_vals+m1) - torch.einsum('bmd,bd->bm',qs, x)))
+                prod = ((x[:,None,:]-classifier_layer[:added_counter][None,:,:]) * embeddings[:added_counter][None,:,:]).sum(2) + m2
+                loss += torch.sum(torch.nn.functional.relu(prod))
 
                 optimizer.zero_grad()
                 loss.backward()
                 return loss
-
             loss = optimizer.step(closure)
-            if loss == 0: break
+            if loss == 0: 
+                break
 
         timelist.append(time.time() - start)
+        total_iter += i*curr_batch_size
 
         if done % 50 == 0:
-            print(f'Done {done} in {time.time() - start} seconds; loss={loss}')
+            print(f'Done {done*args.train_batch_size} in {time.time() - start} seconds; loss={loss}')
         
         if loss != 0: failed_docs.append(doc_now)
                 
         # add to classifier_layer and embeddings
-        classifier_layer[added_counter] = x
+        classifier_layer[added_counter:added_counter+curr_batch_size] = x
         if args.multiple_queries:
-            idx2add = torch.argmax(torch.matmul(qs, x.unsqueeze(dim=1)))
-            embeddings[added_counter] = qs[idx2add]
+            idx2add = torch.argmax(torch.einsum('bmd,bd->bm',qs, x),dim=1)
+            
+            embeddings[added_counter:added_counter+curr_batch_size] = qs[torch.arange(curr_batch_size) ,idx2add]
         else:
+            raise NotImplementedError
             embeddings[added_counter] = q
         classifier_layer = classifier_layer.detach()
         embeddings = embeddings.detach()
         loss = loss.detach()
-        added_counter += 1
-
+        added_counter += curr_batch_size
     if ax_params:
         joblib.dump(classifier_layer, os.path.join(args.write_path_dir, 'temp.pkl'))
         hit_at_1, hit_at_5, hit_at_10, mrr_at_10 = validate_script(args_valid, new_validation_subset=True)
@@ -193,6 +201,7 @@ def addDocs(args, args_valid=None, ax_params=None):
         print(ax_params)
 
         return hit_at_1.item()
+    # print(total_iter)
         
     return failed_docs, classifier_layer, embeddings, np.asarray(timelist).mean(), timelist
 
@@ -245,6 +254,7 @@ def get_arguments():
     parser.add_argument("--lam", default=6, type=float, help="lambda for optimization")
     parser.add_argument("--m1", default=0.03, type=float, help="margin for constraint 1")
     parser.add_argument("--m2", default=0.03, type=float, help="margin for constraint 2")
+    parser.add_argument("--train_batch_size", default=1, type=int, help="batch size for adding documents")
     parser.add_argument("--num_new_docs", default=None, type=int, help="number of new documents to add")
     parser.add_argument("--lbfgs_iterations", default=1000, type=int, help="number of iterations for lbfgs")
     parser.add_argument("--trials", default=30, type=int, help="number of trials to run for hyperparameter tuning")
@@ -520,7 +530,7 @@ def main():
         joblib.dump(timelist, os.path.join(args.write_path_dir, 'timelist.pkl'))
         with open(os.path.join(args.write_path_dir, 'log.txt'), 'a') as f:
             f.write('\n')
-            f.write(f'Hyperparameters: lr={args.lr}, m1={args.m1}, m2={args.m2}, lambda={args.lam}, noise_scale={args.noise_scale}\n')
+            f.write(f'Hyperparameters: lr={args.lr}, m1={args.m1}, m2={args.m2}, lambda={args.lam}, noise_scale={args.noise_scale}, iter={args.lbfgs_iterations}\n')
             f.write('\n')
             f.write(f'Num failed docs: {len(failed_docs)}\n')
             f.write(f'Final time: {np.asarray(timelist).sum()}\n')
