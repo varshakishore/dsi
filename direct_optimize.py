@@ -28,15 +28,23 @@ def initialize(train_q,
                 model_path,
                 train_q_path=None,
                 multiple_queries=False,
-                min_old_q=False):
+                min_old_q=False,
+                DSIplus=False):
     set_seed()
     sentence_embeddings = joblib.load(embeddings_path)
-    class_num = 100001
+    if not DSIplus:
+        class_num = 100001
+    else:
+        class_num = 50000
     model = QueryClassifier(class_num)
     load_saved_weights(model, model_path, strict_set=False)
     classifier_layer = model.classifier.weight.data
 
-
+    if DSIplus:
+        import pdb; pdb.set_trace()
+        corpus_folder = '/home/cw862/ANCE_data/DSI++'
+        d2qmapping = joblib.load(os.path.join(corpus_folder, 'D0', 'docid2quesid.pkl'))
+        docs = list(d2qmapping.keys())
     if not multiple_queries:
         embeddings = sentence_embeddings[:1000010][::10]
         embeddings_new = sentence_embeddings[1000010:][::10]
@@ -135,8 +143,8 @@ def addDocs(args, args_valid=None, ax_params=None):
             train_q = train_q.to('cuda')
             # use generated queries and train queries
             qs = torch.cat((qs, train_q))
-        # compute max document score for each query
-        max_vals = torch.max(torch.einsum('nd,md->nm', classifier_layer[:added_counter], qs), dim=0).values
+        # compute document score for each query
+        prod_to_old = torch.einsum('nd,md->nm', classifier_layer[:added_counter], qs)
 
         # prepare an original query for adding noise
         qs_orig = torch.clone(qs)
@@ -148,16 +156,22 @@ def addDocs(args, args_valid=None, ax_params=None):
             x.requires_grad = True
             def closure():
                 loss = 0
-                if args.symmetric_loss:
-                    for k in range(qs.shape[0]):
-                        prod_to_old = torch.matmul(classifier_layer[:added_counter], qs[k])                    
-                        # take the non-zero product of query embedding and classifier layer
-                        filtered_loss = torch.where(prod_to_old > 0, prod_to_old, torch.tensor([0.]).to('cuda'))
-                        loss += torch.sum(filtered_loss)                            
-                else:
-                    loss += lam * torch.sum(torch.nn.functional.relu((max_vals+m1) - torch.einsum('md,d->m',qs, x)))
+                
+                # the other version of loss needs to debug 
+                # if args.symmetric_loss:
+                    # loss += torch.sum(torch.nn.functional.relu((prod_to_old+m1) - torch.einsum('md,d->m',qs, x)))
+                        
+                max_vals = torch.max(prod_to_old, dim=0).values
+                loss += lam * torch.sum(torch.nn.functional.relu((max_vals+m1) - torch.einsum('md,d->m',qs, x)))
+                if done == 0 and i%50 == 0: 
+                    print(f'1st term: {loss}')  
                 prod = ((x-classifier_layer[:added_counter]) * embeddings[:added_counter]).sum(1) + m2
-                loss += torch.maximum(prod, torch.zeros(len(prod)).to('cuda')).sum()
+                if args.symmetric_loss:
+                    loss += torch.max(torch.maximum(prod, torch.zeros(len(prod)).to('cuda')))
+                else:
+                    loss += torch.maximum(prod, torch.zeros(len(prod)).to('cuda')).sum()
+                if done ==0 and i%50 == 0 : 
+                    print(f'2nd term: {loss}') 
 
                 optimizer.zero_grad()
                 loss.backward()
@@ -258,6 +272,7 @@ def get_arguments():
     parser.add_argument("--noise_scale", default="0.001", type=float, help="how much noise to add to the query embeddings")
     parser.add_argument("--symmetric_loss", action="store_true", help="loss from the two terms are symmetric")
     parser.add_argument("--min_old_q", action="store_true", help="uses the old query with the tightest constraint")
+    parser.add_argument("--DSIplus", action="store_true", help="whether or not in the dsi++ setting")
 
     parser.add_argument(
         "--init", 
