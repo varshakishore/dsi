@@ -8,6 +8,7 @@ import time
 from torch.optim import LBFGS, SGD
 from tqdm import tqdm
 from functools import partial
+from optimizer import ArmijoSGD
 
 # ax imports for hyperparameter optimization
 from ax.plot.contour import plot_contour
@@ -88,13 +89,13 @@ def addDocs(args, args_valid=None, ax_params=None):
         num_new_docs = args.num_new_docs
 
     if ax_params:
-        lr = ax_params['lr']; lam = ax_params['lambda']; m1 = ax_params['m1']; m2 = ax_params['m2']; noise_scale = ax_params['noise_scale']
+        lr = ax_params['lr']; lam = ax_params['lambda']; m1 = ax_params['m1']; m2 = ax_params['m2']; noise_scale = ax_params['noise_scale']; l2_reg = ax_params['l2_reg']
         # num_new_docs = 500
         start_doc = 9000
         print("Using hyperparameters:")
         print(ax_params)
     else:
-        lr = args.lr; lam = args.lam; m1 = args.m1; m2 = args.m2; noise_scale = args.noise_scale; start_doc = 0; 
+        lr = args.lr; lam = args.lam; m1 = args.m1; m2 = args.m2; noise_scale = args.noise_scale; l2_reg = args.l2_reg; start_doc = 0; 
 
     if args.train_q:
         # mapping from doc_id to position in the train_q embedding matrix
@@ -110,7 +111,7 @@ def addDocs(args, args_valid=None, ax_params=None):
     embeddings = torch.cat((embeddings, torch.zeros(num_new_docs, len(classifier_layer[0]))))
 
     step = args.num_qs if args.multiple_queries else 1
-    for done, j in tqdm(enumerate(range(start_doc*step, num_new_embeddings, step))):
+    for done, j in enumerate(tqdm(range(start_doc*step, num_new_embeddings, step))):
         # this set of hyperparameters is not working
         if len(timelist) == 50 and len(failed_docs) >= 25 and ax_params: 
             print("Bad hyperparameters, skipping...")
@@ -126,7 +127,14 @@ def addDocs(args, args_valid=None, ax_params=None):
             x = classifier_layer[torch.argmax(torch.matmul(classifier_layer[:added_counter], q.to(classifier_layer.device))).item()].clone().detach()        
         x = x.to('cuda')
         x.requires_grad = True
-        optimizer = SGD([x], lr=lr)
+        if args.optimizer == 'lbfgs':
+            optimizer = LBFGS([x], lr=lr, tolerance_change=.001, line_search_fn='strong_wolfe')
+        elif args.optimizer == 'sgd':
+            optimizer = SGD([x], lr=lr)
+        elif args.optimizer == 'armijo_sgd': # SGD + line search
+            optimizer = ArmijoSGD([x], lr=lr, c=0.5, tau=0.5)
+        else:
+            raise NotImplementedError
         embeddings = embeddings.to('cuda')
         classifier_layer = classifier_layer.to('cuda')
         doc_now = start_doc + done        
@@ -145,6 +153,7 @@ def addDocs(args, args_valid=None, ax_params=None):
             qs = torch.cat((qs, train_q))
         # compute document score for each query
         prod_to_old = torch.einsum('nd,md->nm', classifier_layer[:added_counter], qs)
+        max_vals = torch.max(prod_to_old, dim=0).values
 
         # prepare an original query for adding noise
         qs_orig = torch.clone(qs)
@@ -160,32 +169,48 @@ def addDocs(args, args_valid=None, ax_params=None):
                 # the other version of loss needs to debug 
                 # if args.symmetric_loss:
                     # loss += torch.sum(torch.nn.functional.relu((prod_to_old+m1) - torch.einsum('md,d->m',qs, x)))
-                        
-                max_vals = torch.max(prod_to_old, dim=0).values
-                loss += lam * torch.sum(torch.nn.functional.relu((max_vals+m1) - torch.einsum('md,d->m',qs, x)))
-                if done == 0 and i%50 == 0: 
-                    print(f'1st term: {loss}')  
+                first_loss_term = torch.nn.functional.relu((max_vals+m1) - torch.einsum('md,d->m', qs, x))
+                if args.squared_hinge:
+                    first_loss_term = first_loss_term**2
+                loss += lam * torch.sum(first_loss_term)
+
                 prod = ((x-classifier_layer[:added_counter]) * embeddings[:added_counter]).sum(1) + m2
                 if args.symmetric_loss:
                     loss += torch.max(torch.maximum(prod, torch.zeros(len(prod)).to('cuda')))
                 else:
-                    loss += torch.maximum(prod, torch.zeros(len(prod)).to('cuda')).sum()
-                if done ==0 and i%50 == 0 : 
-                    print(f'2nd term: {loss}') 
+                    second_loss_term = torch.nn.functional.relu(prod)
+                    if args.squared_hinge:
+                        second_loss_term = second_loss_term**2
+                    loss += (1-lam)*(second_loss_term).sum()
+
+                loss += l2_reg*torch.sum(x**2)
 
                 optimizer.zero_grad()
                 loss.backward()
                 return loss
-
+            x_prev = x.clone().detach()
             loss = optimizer.step(closure)
+            # print(f'Iter: {i}')
+            # print(f'Loss: {loss.item()}')
+            # print(f'Grad: {torch.linalg.vector_norm(x.grad).item()}')
+            # print(f'Delta norm: {torch.linalg.vector_norm(x-x_prev).item()}')
+            with torch.no_grad():
+                delta_norm = torch.linalg.vector_norm(x-x_prev).item()
+                if delta_norm < .001:
+                    break
+            
             if loss == 0: break
+        if loss > 200 and ax_params is not None:
+            # Bad hyperparams, return early
+            return 0.
 
         timelist.append(time.time() - start)
 
         if done % 50 == 0:
             print(f'Done {done} in {time.time() - start} seconds; loss={loss}')
         
-        if loss != 0: failed_docs.append(doc_now)
+        # Condition only meaningful if l2_reg is disabled
+        if loss != 0 and l2_reg == 0: failed_docs.append(doc_now)
                 
         # add to classifier_layer and embeddings
         classifier_layer[added_counter] = x
@@ -201,12 +226,23 @@ def addDocs(args, args_valid=None, ax_params=None):
 
     if ax_params:
         joblib.dump(classifier_layer, os.path.join(args.write_path_dir, 'temp.pkl'))
-        hit_at_1, hit_at_5, hit_at_10, mrr_at_10 = validate_script(args_valid, new_validation_subset=True)
-        print(f'Accuracy hits@1: {hit_at_1}')
-        print(f'Num failed docs: {len(failed_docs)}')
+        hit_at_1, hit_at_5, hit_at_10, mrr_at_10 = validate_script(args_valid, new_validation_subset=True,split='new_val')
+        if args.bayesian_target == 'new_val':
+            print(ax_params)
+            print(f'New hits@1: {hit_at_1}')
+            return hit_at_1.item()
+        
+        old_hit_at_1, hit_at_5, hit_at_10, mrr_at_10 = validate_script(args_valid, new_validation_subset=True, split='old_val')
+        
+        beta = args.harmonic_beta
+        harmonic_mean = (1+beta**2)*(hit_at_1*old_hit_at_1)/((beta**2)*hit_at_1 + old_hit_at_1)
         print(ax_params)
-
-        return hit_at_1.item()
+        print(f'Old hits@1: {old_hit_at_1}')
+        print(f'New hits@1: {hit_at_1}')
+        print(f'harmonic_mean hits@1: {harmonic_mean}')
+        assert args.bayesian_target == 'harmonic_mean'
+        
+        return harmonic_mean.item()
         
     return failed_docs, classifier_layer, embeddings, np.asarray(timelist).mean(), timelist
 
@@ -259,6 +295,19 @@ def get_arguments():
     parser.add_argument("--lam", default=6, type=float, help="lambda for optimization")
     parser.add_argument("--m1", default=0.03, type=float, help="margin for constraint 1")
     parser.add_argument("--m2", default=0.03, type=float, help="margin for constraint 2")
+    parser.add_argument("--l2_reg", default=0.0, type=float, help="l2 regularization for the weights")
+    parser.add_argument(
+        "--optimizer", 
+        default='sgd', 
+        choices=['sgd', 'armijo_sgd', 'lbfgs'], 
+        help='which optimizer to use')
+    parser.add_argument("--squared_hinge", action="store_true", help="square the hinge loss (speeds up optimization)")
+    parser.add_argument(
+        "--bayesian_target", 
+        default='new_val', 
+        choices=['new_val', 'harmonic_mean'], 
+        help='Target metric for hyperparameter tuning')
+    parser.add_argument("--harmonic_beta", default=1, type=int, help="beta for harmonic mean")
     parser.add_argument("--num_new_docs", default=None, type=int, help="number of new documents to add")
     parser.add_argument("--lbfgs_iterations", default=1000, type=int, help="number of iterations for lbfgs")
     parser.add_argument("--trials", default=30, type=int, help="number of trials to run for hyperparameter tuning")
@@ -436,9 +485,10 @@ def main():
             best_parameters, values, experiment, model = optimize(
             parameters=[
                 {"name": "lr", "type": "range", "bounds": [1e-6, 0.4], "log_scale": True},
-                {"name": "lambda", "type": "range", "bounds": [1, 20], "log_scale": True},
+                {"name": "lambda", "value_type": "float", "type": "range", "bounds": [.001, .999], "log_scale": False},
                 {"name": "m1", "type": "fixed", "value": 0.0, "log_scale": False},
                 {"name": "m2", "type": "fixed", "value": 0.0, "log_scale": False},
+                {"name": "l2_reg", "type": "fixed", "value": 0.0, "log_scale": False },
                 {"name": "noise_scale", "type": "range", "bounds": [1e-3, 1.0], "log_scale": True}
             ],
             evaluation_function=partial(addDocs, args, args_valid),
@@ -451,9 +501,10 @@ def main():
             best_parameters, values, experiment, model = optimize(
             parameters=[
                 {"name": "lr", "type": "range", "bounds": [1e-6, 0.4], "log_scale": True},
-                {"name": "lambda", "type": "range", "bounds": [1, 20], "log_scale": True},
+                {"name": "lambda", "value_type": "float", "type": "range", "bounds": [.001, .999], "log_scale": False},
                 {"name": "m1", "type": "range", "bounds": [1e-5, 1.0], "log_scale": True},
                 {"name": "m2", "type": "range", "bounds": [1e-5, 1.0], "log_scale": True},
+                {"name": "l2_reg", "type": "fixed", "value": 0.0, "log_scale": False },
                 {"name": "noise_scale", "type": "range", "bounds": [1e-3, 1.0], "log_scale": True}
             ],
             evaluation_function=partial(addDocs, args, args_valid),
@@ -466,9 +517,10 @@ def main():
             best_parameters, values, experiment, model = optimize(
             parameters=[
                 {"name": "lr", "type": "range", "bounds": [1e-6, 0.4], "log_scale": True},
-                {"name": "lambda", "type": "fixed", "value": 1., "log_scale": True},
+                {"name": "lambda", "type": "fixed", "value": .5, "log_scale": True},
                 {"name": "m1", "type": "range", "bounds": [1e-5, 1.0], "log_scale": True},
                 {"name": "m2", "type": "range", "bounds": [1e-5, 1.0], "log_scale": True},
+                {"name": "l2_reg", "type": "fixed", "value": 0.0, "log_scale": False },
                 {"name": "noise_scale", "type": "fixed", "value": 0.0, "log_scale": False}
             ],
             evaluation_function=partial(addDocs, args, args_valid),
@@ -480,14 +532,23 @@ def main():
 
         else:
             # ax optimize
-            best_parameters, values, experiment, model = optimize(
-            parameters=[
-                {"name": "lr", "type": "range", "bounds": [1e-6, 0.4], "log_scale": True},
-                {"name": "lambda", "type": "range", "bounds": [1, 20], "log_scale": True},
-                {"name": "m1", "type": "range", "bounds": [1e-5, 1.0], "log_scale": True},
-                {"name": "m2", "type": "range", "bounds": [1e-5, 1.0], "log_scale": True},
+            parameters = []
+            if args.optimizer == 'lbfgs':
+                parameters.append({"name": "lr", "value_type": "float", "type": "fixed", "value": 1, "log_scale": False})
+            elif args.optimizer == 'sgd':
+                parameters.append({"name": "lr", "value_type": "float", "type": "range", "bounds": [1e-6, 0.4], "log_scale": True})
+            else:
+                raise NotImplementedError
+            parameters += [
+                {"name": "lambda", "value_type": "float", "type": "range", "bounds": [.001, .999], "log_scale": False},
+                {"name": "m1", "value_type": "float", "type": "range", "bounds": [0.0, 5.0], "log_scale": False},
+                {"name": "m2", "value_type": "float", "type": "range", "bounds": [0.0, 5.0], "log_scale": False},
+                {"name": "l2_reg", "value_type": "float", "type": "range", "bounds": [1e-8, 1e-1], "log_scale": True},
                 {"name": "noise_scale", "type": "fixed", "value": 0.0, "log_scale": False }
-            ],
+            ]
+        
+            best_parameters, values, experiment, model = optimize(
+            parameters=parameters,
             evaluation_function=partial(addDocs, args, args_valid),
             objective_name='val_acc',
             total_trials=args.trials,
@@ -500,23 +561,30 @@ def main():
         print(f'lambda: {best_parameters["lambda"]}')
         print(f'm1: {best_parameters["m1"]}')
         print(f'm2: {best_parameters["m2"]}')
+        print(f'l2_reg: {best_parameters["l2_reg"]}')
         print(f'noise_scale: {best_parameters["noise_scale"]}')
 
         args.lr = best_parameters['lr']
         args.lam = best_parameters['lambda']
         args.m1 = best_parameters['m1']
         args.m2 = best_parameters['m2']
+        args.l2_reg = best_parameters['l2_reg']
         args.noise_scale = best_parameters['noise_scale']
 
         if args.write_path_dir is not None:
             print("Writing to directory: ", args.write_path_dir)
             os.makedirs(args.write_path_dir, exist_ok=True)
-            with open(os.path.join(args.write_path_dir, 'log.txt'), 'w') as f:
+            with open(os.path.join(args.write_path_dir, 'log.txt'), 'a') as f:
+                f.write('\n')
+                f.write(f'Target: {args.bayesian_target}\n')
+                if args.bayesian_target == 'harmonic_mean':
+                    f.write(f'Beta: {args.harmonic_beta}\n')
                 f.write(f'Best Parameters:\n')
                 f.write(f'lr: {args.lr}\n')
                 f.write(f'lambda: {args.lam}\n')
                 f.write(f'm1: {args.m1}\n')
                 f.write(f'm2: {args.m2}\n')
+                f.write(f'l2_reg: {args.l2_reg}\n')
                 f.write(f'noise_scale: {args.noise_scale}\n')
                 f.write('\n')
                 f.write(f'experiment: {exp_to_df(experiment).to_csv()}\n')
@@ -535,7 +603,7 @@ def main():
         joblib.dump(timelist, os.path.join(args.write_path_dir, 'timelist.pkl'))
         with open(os.path.join(args.write_path_dir, 'log.txt'), 'a') as f:
             f.write('\n')
-            f.write(f'Hyperparameters: lr={args.lr}, m1={args.m1}, m2={args.m2}, lambda={args.lam}, noise_scale={args.noise_scale}\n')
+            f.write(f'Hyperparameters: opt={args.optimizer}, squared_hinge={args.squared_hinge} lr={args.lr}, m1={args.m1}, m2={args.m2}, lambda={args.lam}, l2_reg={args.l2_reg}, noise_scale={args.noise_scale}\n')
             f.write('\n')
             f.write(f'Num failed docs: {len(failed_docs)}\n')
             f.write(f'Final time: {np.asarray(timelist).sum()}\n')
