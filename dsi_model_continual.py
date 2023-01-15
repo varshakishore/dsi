@@ -374,7 +374,6 @@ def getModelDataloader(args, new_validation_subset=False):
     else:
         new_val_data = val_data.filter(lambda example: example['doc_id'] > 100000)
     new_generated_queries = generated_queries.filter(lambda example: example['doc_id'] > 100000)
-    # import pdb; pdb.set_trace()
 
     ext_gen_queries_old = extended_generated_queries.filter(lambda example: example['doc_id'] <= 100000)
     ext_gen_queries_new = extended_generated_queries.filter(lambda example: example['doc_id'] > 100000)
@@ -524,7 +523,7 @@ def main():
 
     logging.basicConfig(filename=f'{args.output_dir}/out.log', encoding='utf-8', level=logging.DEBUG)
     
-    _, model, train_dataloader, val_dataloader, new_train_dataloader, new_val_dataloader, class_num_old = getModelDataloader(args)
+    _, model, train_dataloader, val_dataloader, new_train_dataloader, new_val_dataloader, _, _, class_num_old = getModelDataloader(args)
 
     # global_step = 0
 
