@@ -26,12 +26,14 @@ class DSIqgTrainDataset(Dataset):
     def __init__(
             self,
             tokenizer: PreTrainedTokenizer,
-            datadict):
+            datadict,
+            doc_class):
         super().__init__()
         self.train_data = datadict
         
         self.tokenizer = tokenizer
         self.total_len = len(self.train_data)
+        self.doc_class = doc_class
 
 
     def __len__(self):
@@ -45,19 +47,21 @@ class DSIqgTrainDataset(Dataset):
                                    truncation="only_first",
                                   max_length=32).input_ids[0]
         
-        return input_ids, data['doc_id']
+        return input_ids, self.doc_class[data['doc_id']]
     
 
 class GenPassageDataset(Dataset):
     def __init__(
             self,
             tokenizer: PreTrainedTokenizer,
-            datadict):
+            datadict,
+            doc_class):
         super().__init__()
         self.train_data = datadict
         
         self.tokenizer = tokenizer
         self.total_len = len(self.train_data)
+        self.doc_class = doc_class
 
 
     def __len__(self):
@@ -71,7 +75,7 @@ class GenPassageDataset(Dataset):
                                    truncation="only_first",
                                   max_length=32).input_ids[0]
         
-        return input_ids, data['doc_id']
+        return input_ids, self.doc_class[data['doc_id']]
 
 def get_arguments():
     parser = argparse.ArgumentParser()
@@ -193,7 +197,7 @@ class IndexingCollator(DataCollatorWithPadding):
         return inputs
 
     
-def train(args, model, train_dataloader, doc_class, optimizer, length):
+def train(args, model, train_dataloader, optimizer, length):
 
     model.train()
         
@@ -215,11 +219,9 @@ def train(args, model, train_dataloader, doc_class, optimizer, length):
             logits = model(inputs['input_ids'], inputs['attention_mask'])
         _, docids = torch.max(logits, 1)
         
-        labels = [doc_class[label.item()] for label in inputs['labels']]
-        labels = torch.tensor(labels).long().to(logits.device)
-        loss = loss_func(logits, labels)
+        loss = loss_func(logits,torch.tensor(inputs['labels']).long())
 
-        correct_cnt = (docids == labels).sum()
+        correct_cnt = (docids == inputs['labels']).sum()
         
         tr_loss += loss.item()
         
@@ -242,7 +244,7 @@ def train(args, model, train_dataloader, doc_class, optimizer, length):
     logger.info(f'Loss:{tr_loss/(i+1)}')
     return correct_ratio, tr_loss
 
-def validate(args, model, val_dataloader, doc_class):
+def validate(args, model, val_dataloader):
 
     model.eval()
 
@@ -270,27 +272,25 @@ def validate(args, model, val_dataloader, doc_class):
             elif args.model_name == 'bert-base-uncased':
                 logits = model(inputs['input_ids'], inputs['attention_mask'])
             
-            labels = [doc_class[label.item()] for label in inputs['labels']]
-            labels = torch.tensor(labels).long().to(logits.device)
-            loss = loss_func(logits, labels)
+            loss = loss_func(logits,torch.tensor(inputs['labels']).long())
 
             val_loss += loss.item()
             
             _, docids = torch.max(logits, 1)
 
-            hit_at_1 += (docids == labels).sum()
+            hit_at_1 += (docids == inputs['labels']).sum()
 
 
             max_idxs_5 = torch.argsort(logits, 1, descending=True)[:, :5]
-            hit_at_5 += (max_idxs_5 == labels.unsqueeze(1)).any(1).sum()
+            hit_at_5 += (max_idxs_5 == inputs['labels'].unsqueeze(1)).any(1).sum()
 
             # compute recall@10
             max_idxs_10 = torch.argsort(logits, 1, descending=True)[:, :10]
-            hit_at_10 += (max_idxs_10 == labels.unsqueeze(1)).any(1).sum()
+            hit_at_10 += (max_idxs_10 == inputs['labels'].unsqueeze(1)).any(1).sum()
 
             #compute mrr@10. Sum will later be divided by number of elements
 
-            mrr_at_10 += (1/ (torch.where(max_idxs_10 == labels[:, None])[1] + 1)).sum()
+            mrr_at_10 += (1/ (torch.where(max_idxs_10 == inputs['labels'][:, None])[1] + 1)).sum()
 
     
     logger.info(f'Validation Loss: {val_loss/(i+1)}')
@@ -407,9 +407,11 @@ def main():
 
     logger.info('model loaded')
 
-    DSIQG_train = DSIqgTrainDataset(tokenizer=tokenizer, datadict = train_data)
-    DSIQG_val = DSIqgTrainDataset(tokenizer=tokenizer, datadict = val_data)
-    gen_queries = GenPassageDataset(tokenizer=tokenizer, datadict = generated_queries )
+    doc_class = joblib.load(os.path.join(args.base_data_dir, 'doc_class.pkl'))
+
+    DSIQG_train = DSIqgTrainDataset(tokenizer=tokenizer, datadict = train_data, doc_class=doc_class)
+    DSIQG_val = DSIqgTrainDataset(tokenizer=tokenizer, datadict = val_data, doc_class=doc_class)
+    gen_queries = GenPassageDataset(tokenizer=tokenizer, datadict = generated_queries, doc_class=doc_class)
     Train_DSIQG = ConcatDataset([DSIQG_train, gen_queries])
     Val_DSIQG = DSIQG_val
 
@@ -444,13 +446,11 @@ def main():
                                 shuffle=True,
                                 drop_last=False)
 
-    doc_class = joblib.load(os.path.join(args.base_data_dir, 'doc_class.pkl'))
-
     # global_step = 0
 
     # global_step=0
     
-    hit_at_1, hit_at_5, hit_at_10, mrr_at_10 = validate(args, model, val_dataloader, doc_class)
+    hit_at_1, hit_at_5, hit_at_10, mrr_at_10 = validate(args, model, val_dataloader)
 
     logger.info(f'Evaluation Accuracy: {hit_at_1} / {val_length} = {hit_at_1/val_length}')
     logger.info(f'Evaluation Hits@5: {hit_at_5} / {val_length} = {hit_at_5/val_length}')
@@ -465,13 +465,13 @@ def main():
         for i in range(args.train_epochs):
             logger.info(f"Epoch: {i+1}")
             print(f"Learning Rate: {scheduler.get_last_lr()}")
-            train(args, model, train_dataloader, doc_class, optimizer, length)
+            train(args, model, train_dataloader, optimizer, length)
 
             # logger.info(f'Train Accuracy: {correct_ratio_train}')
             # logger.info(f'Train Loss: {tr_loss}')
 
             scheduler.step()
-            hit_at_1, hit_at_5, hit_at_10, mrr_at_10 = validate(args, model, val_dataloader, doc_class)
+            hit_at_1, hit_at_5, hit_at_10, mrr_at_10 = validate(args, model, val_dataloader)
 
             logger.info(f'Epoch: {i+1}')
             logger.info(f'Evaluation Accuracy: {hit_at_1} / {val_length} = {hit_at_1/val_length}')
@@ -480,7 +480,7 @@ def main():
             logger.info(f'MRR@10: {mrr_at_10} / {val_length} = {mrr_at_10/val_length}')
 
             wandb.log({'Hits@1': hit_at_1/val_length, 'Hits@5': hit_at_5/val_length, \
-                'Hits@10': hit_at_10/val_length, 'MRR@10': mrr_at_10/val_length, "epoch": i})
+                'Hits@10': hit_at_10/val_length, 'MRR@10': mrr_at_10/val_length, "epoch": i+1})
 
             cp = save_checkpoint(args, model, i+1, "finetune_old_epoch")
             logger.info('Saved checkpoint at %s', cp)

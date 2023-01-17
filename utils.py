@@ -98,8 +98,8 @@ def load_saved_weights(model, model_path, strict_set=False, load_classifier=True
         model_to_load = get_model_obj(model)
         model_to_load.load_state_dict(saved_state.model_dict, strict=strict_set)
 
-def save_checkpoint(args, model, epoch) -> str:
-    cp = os.path.join(args.output_dir, 'projection_nq320k_epoch' + str(epoch))
+def save_checkpoint(args, model, epoch, name='projection_nq320k_epoch') -> str:
+    cp = os.path.join(args.output_dir, name + str(epoch))
 
     torch.save(model.state_dict(), cp)
     return cp
