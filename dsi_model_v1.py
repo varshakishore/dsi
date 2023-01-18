@@ -298,7 +298,7 @@ def validate(args, model, val_dataloader):
             
     return hit_at_1, hit_at_5, hit_at_10, mrr_at_10
 
-def validate_script(args, doc_type=None, split=None):
+def validate_script(args, tokenizer, model, doc_type=None, split=None):
 
     device = torch.device("cuda")
 
@@ -308,6 +308,10 @@ def validate_script(args, doc_type=None, split=None):
         data_dir = os.path.join(args.base_data_dir, 'old_docs')
     elif doc_type == "new":
         data_dir = os.path.join(args.base_data_dir, 'new_docs')
+    elif doc_type == "tune":
+        data_dir = os.path.join(args.base_data_dir, 'tune_docs')
+
+    doc_class = joblib.load(os.path.join(data_dir, 'doc_class.pkl'))
 
     if split == "train":
 
@@ -323,7 +327,7 @@ def validate_script(args, doc_type=None, split=None):
     elif split == "valid":
         data = datasets.load_dataset(
         'json',
-        data_files=os.path.join(data_dir, 'valqueries.json',
+        data_files=os.path.join(data_dir, 'valqueries.json'),
         ignore_verifications=False,
         cache_dir='cache'
         )['train']
@@ -333,7 +337,7 @@ def validate_script(args, doc_type=None, split=None):
     elif split == "test":
         data = datasets.load_dataset(
         'json',
-        data_files=os.path.join(data_dir, 'testqueries.json',
+        data_files=os.path.join(data_dir, 'testqueries.json'),
         ignore_verifications=False,
         cache_dir='cache'
         )['train']
@@ -343,7 +347,7 @@ def validate_script(args, doc_type=None, split=None):
     elif split == "seenq":
         data = datasets.load_dataset(
             'json',
-            data_files=os.path.join(data_dir, 'passages_seen.json',
+            data_files=os.path.join(data_dir, 'passages_seen.json'),
             ignore_verifications=False,
             cache_dir='cache'
         )['train']   
@@ -353,7 +357,7 @@ def validate_script(args, doc_type=None, split=None):
     elif split == "unseenq":
         data = datasets.load_dataset(
         'json',
-        data_files=os.path.join(data_dir, 'passages_unseen.json',
+        data_files=os.path.join(data_dir, 'passages_unseen.json'),
         ignore_verifications=False,
         cache_dir='cache'
     )['train']
@@ -361,10 +365,10 @@ def validate_script(args, doc_type=None, split=None):
         print('unseen generated queries loaded')
 
     if split == "train" or split == "val":
-        dataset =  DSIqgTrainDataset(tokenizer=tokenizer, datadict = data)
+        dataset =  DSIqgTrainDataset(tokenizer=tokenizer, datadict = data, doc_class = doc_class)
 
     elif split == "seenq" or split == "unseenq":
-        dataset = GenPassageDataset(tokenizer=tokenizer, datadict = data)
+        dataset = GenPassageDataset(tokenizer=tokenizer, datadict = data, doc_class = doc_class)
 
     dataloader = DataLoader(dataset, 
                             batch_size=args.batch_size,
