@@ -176,7 +176,7 @@ def get_arguments():
     parser.add_argument(
         "--base_data_dir",
         type=str,
-        default="/home/vk352/dsi/data/NQ320k/old_docs",
+        default="/home/vk352/dsi/data/NQ320k",
         help="where the train/test/val data is located",
     )
 
@@ -297,7 +297,92 @@ def validate(args, model, val_dataloader):
             
             
     return hit_at_1, hit_at_5, hit_at_10, mrr_at_10
-    
+
+def validate_script(args, doc_type=None, split=None):
+
+    device = torch.device("cuda")
+
+    logging.info(f'Device: {device}')
+
+    if doc_type == "old":
+        data_dir = os.path.join(args.base_data_dir, 'old_docs')
+    elif doc_type == "new":
+        data_dir = os.path.join(args.base_data_dir, 'new_docs')
+
+    if split == "train":
+
+        data = datasets.load_dataset(
+        'json',
+        data_files=os.path.join(data_dir, 'trainqueries.json'),
+        ignore_verifications=False,
+        cache_dir='cache'
+        )['train']
+
+        print('train set loaded')
+
+    elif split == "valid":
+        data = datasets.load_dataset(
+        'json',
+        data_files=os.path.join(data_dir, 'valqueries.json',
+        ignore_verifications=False,
+        cache_dir='cache'
+        )['train']
+
+        print('validation set loaded')
+
+    elif split == "test":
+        data = datasets.load_dataset(
+        'json',
+        data_files=os.path.join(data_dir, 'testqueries.json',
+        ignore_verifications=False,
+        cache_dir='cache'
+        )['train']
+
+        print('test set loaded')
+
+    elif split == "seenq":
+        data = datasets.load_dataset(
+            'json',
+            data_files=os.path.join(data_dir, 'passages_seen.json',
+            ignore_verifications=False,
+            cache_dir='cache'
+        )['train']   
+
+        print('seen generated queries loaded')
+
+    elif split == "unseenq":
+        data = datasets.load_dataset(
+        'json',
+        data_files=os.path.join(data_dir, 'passages_unseen.json',
+        ignore_verifications=False,
+        cache_dir='cache'
+    )['train']
+
+        print('unseen generated queries loaded')
+
+    if split == "train" or split == "val":
+        dataset =  DSIqgTrainDataset(tokenizer=tokenizer, datadict = data)
+
+    elif split == "seenq" or split == "unseenq":
+        dataset = GenPassageDataset(tokenizer=tokenizer, datadict = data)
+
+    dataloader = DataLoader(dataset, 
+                            batch_size=args.batch_size,
+                            collate_fn=IndexingCollator(
+                            tokenizer,
+                            padding='longest'),
+                            shuffle=False,
+                            drop_last=False)
+
+    hits_at_1, hits_at_5, hits_at_10, mrr_at_10 = validate(args, model, dataloader)
+    length = len(dataloader.dataset)
+    hits_at_1 = hits_at_1/length
+    hits_at_5 = hits_at_5/length
+    hits_at_10 = hits_at_10/length
+    mrr_at_10 = mrr_at_10/length
+
+    return hits_at_1, hits_at_5, hits_at_10, mrr_at_10
+
 def set_seed(seed):
     random.seed(seed)
     np.random.seed(seed)
@@ -353,18 +438,18 @@ def main():
     cache_dir='cache'
     )['train']
 
-    logger.info('test set')
+    logger.info('validation set loade')
 
-    if args.old_docs_only:
-        train_data = train_data.filter(lambda example: example['doc_id'] <= 100000)
-        val_data = val_data.filter(lambda example: example['doc_id'] <= 100000)
-        generated_queries = generated_queries.filter(lambda example: example['doc_id'] <= 100000)
+    # if args.old_docs_only:
+    #     train_data = train_data.filter(lambda example: example['doc_id'] <= 100000)
+    #     val_data = val_data.filter(lambda example: example['doc_id'] <= 100000)
+    #     generated_queries = generated_queries.filter(lambda example: example['doc_id'] <= 100000)
 
     length_queries = len(generated_queries)
     logger.info('length')
     logger.info(length_queries)
 
-    old_docs_list = joblib.load(os.path.join(args.base_data_dir, 'doc_list.pkl'))
+    old_docs_list = joblib.load(os.path.join(args.base_data_dir,'old_docs' 'doc_list.pkl'))
     class_num = len(old_docs_list)
 
     logger.info(f'Class number {class_num}')
@@ -407,7 +492,7 @@ def main():
 
     logger.info('model loaded')
 
-    doc_class = joblib.load(os.path.join(args.base_data_dir, 'doc_class.pkl'))
+    doc_class = joblib.load(os.path.join(args.base_data_dir,'old_docs', 'doc_class.pkl'))
 
     DSIQG_train = DSIqgTrainDataset(tokenizer=tokenizer, datadict = train_data, doc_class=doc_class)
     DSIQG_val = DSIqgTrainDataset(tokenizer=tokenizer, datadict = val_data, doc_class=doc_class)
