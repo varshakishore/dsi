@@ -34,7 +34,7 @@ def get_arguments():
     parser.add_argument(
         "--dataset", 
         default='nq320k_legacy', 
-        choices=['nq320k_legacy', 'nq320k'], 
+        choices=['nq320k_legacy', 'nq320k','msmarco'], 
         help='which dataset to use')
 
     parser.add_argument(
@@ -134,8 +134,8 @@ def main():
     args = get_arguments()
 
     ### HARDCODING 
-    ### use the same number of class no matter which split to load
-    class_num = 109715
+    ### use the same number of class no matter which split to load because the output does not need the last layer
+    class_num = 100000
 
     if args.model_name == 'T5-base':
         model = T5Model_projection(class_num)
@@ -160,6 +160,20 @@ def main():
         elif args.split == 'val':
             # Hardcoded path for tuning set
             doc2class = joblib.load('/home/jl3353/dsi/data/NQ320k/tune_docs/doc_class.pkl')
+        else:
+            raise ValueError(f'{args.split} split not supported for {args.dataset} dataset')
+        dataset_cls = partial(dsi_model_v1.DSIqgTrainDataset, doc_class=doc2class)
+        gen_dataset_cls = partial(dsi_model_v1.GenPassageDataset, doc_class=doc2class)
+    elif args.dataset == 'msmarco':
+        data_dirs = {'data': '/home/cw862/MSMARCO',
+                    'train': '/home/cw862/MSMARCO/old_docs/trainqueries.json',
+                    'val': '/home/cw862/MSMARCO/tune_docs/trainqueries.json',
+                    'test': '/home/cw862/MSMARCO/new_docs/trainqueries'}
+        if args.split in ['train', 'test']:
+            doc2class = joblib.load(os.path.join(os.path.dirname(data_dirs[args.split]), 'doc_class.pkl'))
+        elif args.split == 'val':
+            # TODO path for the doc_class for MSMARCO
+            doc2class = joblib.load('/home/cw862/MSMARCO/tune_docs/doc_class.pkl')
         else:
             raise ValueError(f'{args.split} split not supported for {args.dataset} dataset')
         dataset_cls = partial(dsi_model_v1.DSIqgTrainDataset, doc_class=doc2class)
@@ -244,7 +258,7 @@ def main():
             if args.dataset == 'nq320k_legacy':
                 assert (labels.numpy() == [x for x in range(109715) for y in range(10)]).all()
                 joblib.dump(embedding_matrix, args.output_dir)
-            elif args.dataset == 'nq320k':
+            elif args.dataset == 'nq320k' or args.dataset == "msmarco":
                 joblib.dump(embedding_matrix, os.path.join(args.output_dir,f'{args.split}-gen-embeddings.pkl'))
                 class2doc = {v:k for k, v in doc2class.items()}
                 assert len(class2doc) == len(doc2class)
@@ -275,7 +289,7 @@ def main():
                 joblib.dump(embedding_matrix, os.path.join(args.output_dir,f'{args.split}-embeddings.pkl'))
 
                 print('embedding matrix, index and docids written.')
-            elif args.dataset == 'nq320k':
+            elif args.dataset == 'nq320k' or args.dataset == 'msmarco':
                 joblib.dump(embedding_matrix, os.path.join(args.output_dir,f'{args.split}-embeddings.pkl'))
                 class2doc = {v:k for k, v in doc2class.items()}
                 assert len(class2doc) == len(doc2class)
