@@ -83,14 +83,15 @@ def initialize_nq320k(train_q,
     new_gen_q_embeddings = joblib.load(os.path.join(embeddings_path, f'{split}-gen-embeddings.pkl'))
     new_gen_q_doc_ids = joblib.load(os.path.join(embeddings_path, f'{split}-gen-docids.pkl'))
 
-    assert not train_q, 'train_q currently not supported for NQ320k'
     if train_q:
         print('using train set queries...')
-        train_qs = joblib.load(train_q_path)
+        train_qs = joblib.load(os.path.join(embeddings_path, 'train-embeddings.pkl')).to(classifier_layer.device)
+        train_qs_doc_ids = joblib.load(os.path.join(embeddings_path, 'train-docids.pkl')).to(classifier_layer.device)
     else: 
         train_qs = None
+        train_qs_doc_ids = None
 
-    return new_docs_list, train_qs, old_qeries, new_gen_q_embeddings, new_gen_q_doc_ids, classifier_layer
+    return new_docs_list, train_qs, train_qs_doc_ids, old_qeries, new_gen_q_embeddings, new_gen_q_doc_ids, classifier_layer
 
 def add_noise(x, scale):
     return x + torch.randn(x.shape[0],x.shape[1]).to('cuda') * torch.norm(x, dim=1)[:, None] * scale
@@ -103,7 +104,7 @@ def addDocs(args, args_valid=None, ax_params=None):
     
     if args.dataset == 'nq320k':
         tune = (ax_params is not None)
-        new_docs_list, train_qs, queries, new_gen_q_embeddings, new_gen_q_doc_ids, classifier_layer = initialize_nq320k(args.train_q, args.num_qs, args.embeddings_path, args.model_path, args.train_q_path ,args.multiple_queries, args.min_old_q, tune=tune)
+        new_docs_list, train_qs, train_qs_doc_ids, queries, new_gen_q_embeddings, new_gen_q_doc_ids, classifier_layer = initialize_nq320k(args.train_q, args.num_qs, args.embeddings_path, args.model_path, args.train_q_path ,args.multiple_queries, args.min_old_q, tune=tune)
     else:
         raise ValueError(f'Invalid dataset: {args.dataset}')
     
@@ -115,10 +116,6 @@ def addDocs(args, args_valid=None, ax_params=None):
         print(ax_params)
     else:
         lr = args.lr; lam = args.lam; m1 = args.m1; m2 = args.m2; noise_scale = args.noise_scale; l2_reg = args.l2_reg;
-
-    if args.train_q:
-        # mapping from doc_id to position in the train_q embedding matrix
-        docid2trainq = joblib.load(args.train_q_doc_id_map_path)
 
 
     added_counter = len(classifier_layer)
@@ -160,13 +157,8 @@ def addDocs(args, args_valid=None, ax_params=None):
         qs = new_gen_q_embeddings[new_gen_q_doc_ids == doc_id][:args.num_qs]
         qs = qs.to('cuda')
         if args.train_q:
-            raise NotImplementedError
-            # number of train queries corresponded to a doc_id
-            num_trainq = len(docid2trainq[doc_now + num_old_docs])
             # initialize the train queries matrix
-            train_q = torch.zeros((num_trainq,embedding_size))
-            for k in range(num_trainq):
-                train_q[k,:] = train_qs[docid2trainq[doc_now + num_old_docs][k]]
+            train_q = train_qs[train_qs_doc_ids == doc_id]
             train_q = train_q.to('cuda')
             # use generated queries and train queries
             qs = torch.cat((qs, train_q))
@@ -509,8 +501,7 @@ def exists(x):
 def set_file_paths(args):
     nq320k_filepaths = {'embeddings_path':'/home/jl3353/dsi/NQ320k_outputs/old_docs/finetune_old_epoch17/',
                                 'model_path':'/home/vk352/dsi/NQ320k_outputs/old_docs/finetune_old_epoch17',
-                                'train_q_path':None,
-                                'train_q_doc_id_map_path':None}
+                                }
    
     filepath_defaults = {'nq320k':nq320k_filepaths}
 
