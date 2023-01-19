@@ -458,7 +458,7 @@ def main():
     logger.info('length')
     logger.info(length_queries)
 
-    old_docs_list = joblib.load(os.path.join(args.base_data_dir,'old_docs' 'doc_list.pkl'))
+    old_docs_list = joblib.load(os.path.join(args.base_data_dir, 'doc_list.pkl'))
     class_num = len(old_docs_list)
 
     logger.info(f'Class number {class_num}')
@@ -501,7 +501,7 @@ def main():
 
     logger.info('model loaded')
 
-    doc_class = joblib.load(os.path.join(args.base_data_dir,'old_docs', 'doc_class.pkl'))
+    doc_class = joblib.load(os.path.join(args.base_data_dir, 'doc_class.pkl'))
 
     DSIQG_train = DSIqgTrainDataset(tokenizer=tokenizer, datadict = train_data, doc_class=doc_class)
     DSIQG_val = DSIqgTrainDataset(tokenizer=tokenizer, datadict = val_data, doc_class=doc_class)
