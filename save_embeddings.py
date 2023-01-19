@@ -7,6 +7,8 @@ from transformers.modeling_outputs import BaseModelOutput, Seq2SeqModelOutput
 from T5Model import T5Model_projection
 from BertModel import QueryClassifier
 from dsi_model import DSIqgTrainDataset, GenPassageDataset 
+import dsi_model_v1
+from functools import partial
 from transformers import DataCollatorWithPadding
 from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm
@@ -28,6 +30,12 @@ def get_arguments():
         choices=['T5-base', 'bert-base-uncased'],
         help="Model name",
     )
+
+    parser.add_argument(
+        "--dataset", 
+        default='nq320k_legacy', 
+        choices=['nq320k_legacy', 'nq320k'], 
+        help='which dataset to use')
 
     parser.add_argument(
         "--initialize_model",
@@ -53,9 +61,11 @@ def get_arguments():
     parser.add_argument(
         "--split",
         default = 'gen',
-        choices=['train','val','gen'],
+        choices=['train','val', 'test', 'gen'],
         help="which split to save"
     )
+    
+    parser.add_argument('--generated', default=False, action='store_true')
 
     args = parser.parse_args()
 
@@ -82,7 +92,7 @@ def save(args, model, dataloader, batch_size, dataset_size):
 
     device = torch.device('cuda')
 
-    for i,inputs in tqdm(enumerate(dataloader), desc='forward pass'):
+    for i,inputs in enumerate(tqdm(dataloader, desc='forward pass')):
                     
         inputs.to(device)            
         
@@ -127,7 +137,6 @@ def main():
     ### use the same number of class no matter which split to load
     class_num = 109715
 
-
     if args.model_name == 'T5-base':
         model = T5Model_projection(class_num)
         tokenizer = T5Tokenizer.from_pretrained('t5-base',cache_dir='cache')
@@ -135,39 +144,64 @@ def main():
         model = QueryClassifier(class_num)
         tokenizer = BertTokenizer.from_pretrained('bert-base-uncased',cache_dir='cache')
 
+    if args.dataset == 'nq320k_legacy':
+        data_dirs = {'gen': '/home/vk352/ANCE/NQ320k_dataset_v2/passages.json',
+                    'train': '/home/vk352/ANCE/NQ320k_dataset_v2/trainqueries_extended.json',
+                    'val': '/home/vk352/ANCE/NQ320k_dataset_v2/testqueries.json'}
+        dataset_cls = DSIqgTrainDataset
+        gen_dataset_cls = GenPassageDataset
+    elif args.dataset == 'nq320k':
+        data_dirs = {'data': '/home/vk352/dsi/data/NQ320k',
+                    'train': '/home/vk352/dsi/data/NQ320k/old_docs/trainqueries.json',
+                    'val': '/home/vk352/dsi/data/NQ320k/tune_docs/trainqueries.json',
+                    'test': '/home/vk352/dsi/data/NQ320k/new_docs/trainqueries.json'}
+        if args.split in ['train', 'test']:
+            doc2class = joblib.load(os.path.join(os.path.dirname(data_dirs[args.split]), 'doc_class.pkl'))
+        elif args.split == 'val':
+            # Hardcoded path for tuning set
+            doc2class = joblib.load('/home/jl3353/dsi/data/NQ320k/tune_docs/doc_class.pkl')
+        else:
+            raise ValueError(f'{args.split} split not supported for {args.dataset} dataset')
+        dataset_cls = partial(dsi_model_v1.DSIqgTrainDataset, doc_class=doc2class)
+        gen_dataset_cls = partial(dsi_model_v1.GenPassageDataset, doc_class=doc2class)
+        
+    else:
+        raise ValueError(f'{args.dataset} dataset not supported')
 
-    if args.split == 'gen':
+
+    if args.generated:
+        file_path = os.path.join(os.path.dirname(data_dirs[args.split]), 'passages_seen.json')
+        
         generated_queries = datasets.load_dataset(
         'json',
-        data_files='/home/vk352/ANCE/NQ320k_dataset_v2/passages.json',
+        data_files=file_path,
         ignore_verifications=False,
         cache_dir='cache'
         )['train'] 
 
-        queries = GenPassageDataset(tokenizer=tokenizer, datadict = generated_queries)
-
-
-    elif args.split == 'train':
+        queries = gen_dataset_cls(tokenizer=tokenizer, datadict = generated_queries)
+    elif args.split == 'gen':
+        assert args.dataset == 'nq320k_legacy', 'only legacy dataset is supported'
         queries = datasets.load_dataset(
         'json',
-        data_files='/home/vk352/ANCE/NQ320k_dataset_v2/trainqueries_extended.json',
+        data_files='/home/vk352/ANCE/NQ320k_dataset_v2/passages.json',
         ignore_verifications=False,
         cache_dir='cache'
         )['train']
 
-        queries = DSIqgTrainDataset(tokenizer=tokenizer, datadict = queries)
+        queries = gen_dataset_cls(tokenizer=tokenizer, datadict = queries)
 
-
-    elif args.split == 'val':
+    elif args.split in ['train', 'val', 'test']:
         queries = datasets.load_dataset(
         'json',
-        data_files='/home/vk352/ANCE/NQ320k_dataset_v2/testqueries.json',
+        data_files=data_dirs[args.split],
         ignore_verifications=False,
         cache_dir='cache'
         )['train']
-        
-        queries = DSIqgTrainDataset(tokenizer=tokenizer, datadict = queries)
-        
+
+        queries = dataset_cls(tokenizer=tokenizer, datadict = queries)
+    else:
+        raise ValueError(f'{args.split} split not supported')        
 
     dataloader = DataLoader(queries, 
                             batch_size=3500,
@@ -185,8 +219,10 @@ def main():
 
     model = torch.nn.DataParallel(model)
     model.to(device)
-
     embedding_matrix, labels = save(args, model, dataloader, 3500, len(queries))
+    # Create output directory if needed
+    if not os.path.exists(args.output_dir):
+        os.makedirs(args.output_dir)
 
     if args.save_average:
         embedding_matrix_pd = pd.DataFrame(embedding_matrix)
@@ -202,34 +238,51 @@ def main():
         print('embedding file written.')
 
     else:
-        if args.split == 'gen':
+        if args.generated:
 
         # check if order of samples is 0,0,0,0,0,0,0,0,0,0,1,1,...,109715,109715
-            assert (labels.numpy() == [x for x in range(109715) for y in range(10)]).all()
+            if args.dataset == 'nq320k_legacy':
+                assert (labels.numpy() == [x for x in range(109715) for y in range(10)]).all()
+                joblib.dump(embedding_matrix, args.output_dir)
+            elif args.dataset == 'nq320k':
+                joblib.dump(embedding_matrix, os.path.join(args.output_dir,f'{args.split}-gen-embeddings.pkl'))
+                class2doc = {v:k for k, v in doc2class.items()}
+                assert len(class2doc) == len(doc2class)
+                doc_ids = torch.tensor([class2doc[i.item()] for i in labels], dtype=torch.long)
+                joblib.dump(doc_ids, os.path.join(args.output_dir, f'{args.split}-gen-docids.pkl'))
+            else:
+                raise ValueError(f'{args.dataset} dataset not supported')
 
-            joblib.dump(embedding_matrix, args.output_dir)
+            
         # with open(args.output_dir, 'wb') as f:
         #     pkl.dump(embedding_matrix, f)
 
             print('embedding file written.')
 
         else:
-            embedding_matrix_pd = pd.DataFrame(embedding_matrix)
-            embedding_matrix_pd.insert(0, "doc_ids", labels)
-            embedding_matrix_sorted = embedding_matrix_pd.sort_values(by=['doc_ids'])
-            import pdb;pdb.set_trace()
-            ### the index of sorting 
-            index = embedding_matrix_sorted.index
-            ### doc_ids list, access through the index
-            doc_ids = embedding_matrix_sorted['doc_ids']
+            if args.dataset == 'nq320k_legacy':
+                embedding_matrix_pd = pd.DataFrame(embedding_matrix)
+                embedding_matrix_pd.insert(0, "doc_ids", labels)
+                embedding_matrix_sorted = embedding_matrix_pd.sort_values(by=['doc_ids'])
+                import pdb;pdb.set_trace()
+                ### the index of sorting 
+                index = embedding_matrix_sorted.index
+                ### doc_ids list, access through the index
+                doc_ids = embedding_matrix_sorted['doc_ids']
 
-            if not os.path.exists(args.output_dir):
-                os.mkdir(args.output_dir)
-            joblib.dump(index, os.path.join(args.output_dir,f'{args.split}-index.pkl'))
-            joblib.dump(doc_ids, os.path.join(args.output_dir, f'{args.split}-docids.pkl'))
-            joblib.dump(embedding_matrix, os.path.join(args.output_dir,f'{args.split}-embeddings.pkl'))
+                joblib.dump(index, os.path.join(args.output_dir,f'{args.split}-index.pkl'))
+                joblib.dump(doc_ids, os.path.join(args.output_dir, f'{args.split}-docids.pkl'))
+                joblib.dump(embedding_matrix, os.path.join(args.output_dir,f'{args.split}-embeddings.pkl'))
 
-            print('embedding matrix, index and docids written.')
+                print('embedding matrix, index and docids written.')
+            elif args.dataset == 'nq320k':
+                joblib.dump(embedding_matrix, os.path.join(args.output_dir,f'{args.split}-embeddings.pkl'))
+                class2doc = {v:k for k, v in doc2class.items()}
+                assert len(class2doc) == len(doc2class)
+                doc_ids = torch.tensor([class2doc[i.item()] for i in labels], dtype=torch.long)
+                joblib.dump(doc_ids, os.path.join(args.output_dir, f'{args.split}-docids.pkl'))
+            else:
+                raise ValueError(f'{args.dataset} dataset not supported')
 
 
 if __name__ == "__main__":
