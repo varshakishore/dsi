@@ -57,15 +57,24 @@ def initialize_nq320k(train_q,
     assert multiple_queries, 'Must use multiple queries'
     
     # Sentence embeddings for generated queries
-    old_gen_q_embeddings = joblib.load(os.path.join(embeddings_path, 'train-gen-embeddings.pkl')).to(classifier_layer.device)
+    old_gen_q_embeddings = joblib.load(os.path.join(embeddings_path, 'old-gen-embeddings.pkl')).to(classifier_layer.device)
     # Document ids for generated queries
-    old_gen_q_doc_ids = joblib.load(os.path.join(embeddings_path, 'train-gen-docids.pkl')).to(classifier_layer.device)
+    old_gen_q_doc_ids = joblib.load(os.path.join(embeddings_path, 'old-gen-docids.pkl')).to(classifier_layer.device)
+
+    # Sentence embeddings for natural queries
+    old_q_embeddings = joblib.load(os.path.join(embeddings_path, 'old-train-embeddings.pkl')).to(classifier_layer.device)
+    # Document ids for generated queries
+    old_q_doc_ids = joblib.load(os.path.join(embeddings_path, 'old-train-docids.pkl')).to(classifier_layer.device)
 
     old_qeries = torch.zeros(len(old_docs_list), 768).to(classifier_layer.device)
     assert min_old_q, 'Must use min_old_q'
     for i in tqdm(range(len(old_docs_list)), desc='Selecting min of old queries'):
         # Extract generated queries for the document
-        q_embs = old_gen_q_embeddings[old_gen_q_doc_ids == old_docs_list[i]][:num_qs]  # (num_qs, 768)
+        gen_q_embs = old_gen_q_embeddings[old_gen_q_doc_ids == old_docs_list[i]][:num_qs]  # (num_qs, 768)
+        # Extract natural queries for the document
+        q_embs = old_q_embeddings[old_q_doc_ids == old_docs_list[i]]  # (*, 768)
+        # Concatenate the two query embeddings
+        q_embs = torch.cat([gen_q_embs, q_embs], dim=0)  # (*, 768)
         # Compute scores for each query
         doc_scores = torch.matmul(q_embs, classifier_layer[i])    # (num_qs)
         # Select the query with the lowest score
@@ -74,19 +83,17 @@ def initialize_nq320k(train_q,
         old_qeries[i] = q_embs[min_idx]
 
     if tune:
-        dir = 'tune_docs'
-        split = 'val'
+        doc_split = 'tune'
     else:
-        dir = 'new_docs'
-        split = 'test'
-    new_docs_list = joblib.load(os.path.join(data_dir, dir, 'doc_list.pkl'))
-    new_gen_q_embeddings = joblib.load(os.path.join(embeddings_path, f'{split}-gen-embeddings.pkl'))
-    new_gen_q_doc_ids = joblib.load(os.path.join(embeddings_path, f'{split}-gen-docids.pkl'))
+        doc_split = 'new'
+    new_docs_list = joblib.load(os.path.join(data_dir, f'{doc_split}_docs', 'doc_list.pkl'))
+    new_gen_q_embeddings = joblib.load(os.path.join(embeddings_path, f'{doc_split}-gen-embeddings.pkl'))
+    new_gen_q_doc_ids = joblib.load(os.path.join(embeddings_path, f'{doc_split}-gen-docids.pkl'))
 
     if train_q:
         print('using train set queries...')
-        train_qs = joblib.load(os.path.join(embeddings_path, f'{split}-embeddings.pkl')).to(classifier_layer.device)
-        train_qs_doc_ids = joblib.load(os.path.join(embeddings_path, f'{split}-docids.pkl')).to(classifier_layer.device)
+        train_qs = joblib.load(os.path.join(embeddings_path, f'{doc_split}-train-embeddings.pkl')).to(classifier_layer.device)
+        train_qs_doc_ids = joblib.load(os.path.join(embeddings_path, f'{doc_split}-train-docids.pkl')).to(classifier_layer.device)
     else: 
         train_qs = None
         train_qs_doc_ids = None
@@ -126,7 +133,6 @@ def addDocs(args, args_valid=None, ax_params=None):
     classifier_layer = torch.cat((classifier_layer, torch.zeros(num_new_docs, embedding_size).to(classifier_layer.device)))
     queries = torch.cat((queries, torch.zeros(num_new_docs, embedding_size, device=queries.device)))
 
-    step = args.num_qs if args.multiple_queries else 1
     for done, doc_id in enumerate(tqdm(new_docs_list, desc='Adding documents')):
         # this set of hyperparameters is not working
         if len(timelist) == 50 and len(failed_docs) >= 25 and ax_params: 
@@ -172,7 +178,8 @@ def addDocs(args, args_valid=None, ax_params=None):
 
         start = time.time()
         # Compute logits for old document classes
-        old_logits = (classifier_layer[:added_counter]*queries[:added_counter]).sum(1).detach()
+        with torch.no_grad():
+            old_logits = (classifier_layer[:added_counter]*queries[:added_counter]).sum(1)
         for i in range(args.lbfgs_iterations):
             if args.add_noise:
                 qs = add_noise(qs_orig, noise_scale)
@@ -197,7 +204,7 @@ def addDocs(args, args_valid=None, ax_params=None):
                         second_loss_term = second_loss_term**2
                     loss += (1-lam)*(second_loss_term).sum()
 
-                loss += l2_reg*torch.sum(x**2)
+                loss += l2_reg*torch.mean(x**2)
 
                 optimizer.zero_grad()
                 loss.backward()
@@ -501,7 +508,7 @@ def exists(x):
     return x is not None
 
 def set_file_paths(args):
-    nq320k_filepaths = {'embeddings_path':'/home/jl3353/dsi/NQ320k_outputs/old_docs/finetune_old_epoch17/',
+    nq320k_filepaths = {'embeddings_path':'/home/jl3353/dsi/NQ320k_outputs/finetune_old_epoch17/',
                                 'model_path':'/home/vk352/dsi/NQ320k_outputs/old_docs/finetune_old_epoch17',
                                 }
    
