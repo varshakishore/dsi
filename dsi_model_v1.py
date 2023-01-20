@@ -174,7 +174,7 @@ def get_arguments():
     parser.add_argument(
         "--base_data_dir",
         type=str,
-        default="/home/vk352/dsi/data/NQ320k/old_docs",
+        default="/home/vk352/dsi/data/NQ320k",
         help="where the train/test/val data is located",
     )
 
@@ -308,7 +308,101 @@ def validate(args, model, val_dataloader):
             
             
     return hit_at_1, hit_at_5, hit_at_10, mrr_at_10
-    
+
+def validate_script(args, tokenizer, model, doc_type=None, split=None):
+
+    device = torch.device("cuda")
+
+    logging.info(f'Device: {device}')
+
+    if doc_type == "old":
+        data_dir = os.path.join(args.base_data_dir, 'old_docs')
+        doc_class = joblib.load(os.path.join(data_dir, 'doc_class.pkl'))
+    elif doc_type == "new":
+        data_dir = os.path.join(args.base_data_dir, 'new_docs')
+        doc_class = joblib.load(os.path.join(data_dir, 'doc_class.pkl'))
+    elif doc_type == "tune":
+        data_dir = os.path.join(args.base_data_dir, 'tune_docs')
+        doc_class = joblib.load('/home/jl3353/dsi/data/NQ320k/tune_docs/doc_class.pkl')
+    else:
+        raise ValueError(f'doc_type={doc_type} must be old, new, or tune')
+
+    if split == "train":
+
+        data = datasets.load_dataset(
+        'json',
+        data_files=os.path.join(data_dir, 'trainqueries.json'),
+        ignore_verifications=False,
+        cache_dir='cache'
+        )['train']
+
+        print('train set loaded')
+
+    elif split == "valid":
+        data = datasets.load_dataset(
+        'json',
+        data_files=os.path.join(data_dir, 'valqueries.json'),
+        ignore_verifications=False,
+        cache_dir='cache'
+        )['train']
+
+        print('validation set loaded')
+
+    elif split == "test":
+        data = datasets.load_dataset(
+        'json',
+        data_files=os.path.join(data_dir, 'testqueries.json'),
+        ignore_verifications=False,
+        cache_dir='cache'
+        )['train']
+
+        print('test set loaded')
+
+    elif split == "seenq":
+        data = datasets.load_dataset(
+            'json',
+            data_files=os.path.join(data_dir, 'passages_seen.json'),
+            ignore_verifications=False,
+            cache_dir='cache'
+        )['train']   
+
+        print('seen generated queries loaded')
+
+    elif split == "unseenq":
+        data = datasets.load_dataset(
+        'json',
+        data_files=os.path.join(data_dir, 'passages_unseen.json'),
+        ignore_verifications=False,
+        cache_dir='cache'
+        )['train']
+
+        print('unseen generated queries loaded')
+    else:
+        raise ValueError(f'split={split} must be train, valid, test, seenq, or unseenq')
+
+    if split == "train" or split == "valid":
+        dataset =  DSIqgTrainDataset(tokenizer=tokenizer, datadict = data, doc_class = doc_class)
+
+    elif split == "seenq" or split == "unseenq":
+        dataset = GenPassageDataset(tokenizer=tokenizer, datadict = data, doc_class = doc_class)
+
+    dataloader = DataLoader(dataset, 
+                            batch_size=args.batch_size,
+                            collate_fn=IndexingCollator(
+                            tokenizer,
+                            padding='longest'),
+                            shuffle=False,
+                            drop_last=False)
+
+    hits_at_1, hits_at_5, hits_at_10, mrr_at_10 = validate(args, model, dataloader)
+    length = len(dataloader.dataset)
+    hits_at_1 = hits_at_1/length
+    hits_at_5 = hits_at_5/length
+    hits_at_10 = hits_at_10/length
+    mrr_at_10 = mrr_at_10/length
+
+    return hits_at_1, hits_at_5, hits_at_10, mrr_at_10
+
 def set_seed(seed):
     random.seed(seed)
     np.random.seed(seed)
