@@ -323,7 +323,7 @@ def validate_script(args, tokenizer, model, doc_type=None, split=None):
         doc_class = joblib.load(os.path.join(data_dir, 'doc_class.pkl'))
     elif doc_type == "tune":
         data_dir = os.path.join(args.base_data_dir, 'tune_docs')
-        doc_class = joblib.load('/home/jl3353/dsi/data/NQ320k/tune_docs/doc_class.pkl')
+        doc_class = joblib.load(os.path.join(data_dir, 'doc_class.pkl'))
     else:
         raise ValueError(f'doc_type={doc_type} must be old, new, or tune')
 
