@@ -85,8 +85,8 @@ def initialize_nq320k(train_q,
 
     if train_q:
         print('using train set queries...')
-        train_qs = joblib.load(os.path.join(embeddings_path, 'train-embeddings.pkl')).to(classifier_layer.device)
-        train_qs_doc_ids = joblib.load(os.path.join(embeddings_path, 'train-docids.pkl')).to(classifier_layer.device)
+        train_qs = joblib.load(os.path.join(embeddings_path, f'{split}-embeddings.pkl')).to(classifier_layer.device)
+        train_qs_doc_ids = joblib.load(os.path.join(embeddings_path, f'{split}-docids.pkl')).to(classifier_layer.device)
     else: 
         train_qs = None
         train_qs_doc_ids = None
@@ -115,7 +115,7 @@ def addDocs(args, args_valid=None, ax_params=None):
         print("Using hyperparameters:")
         print(ax_params)
     else:
-        lr = args.lr; lam = args.lam; m1 = args.m1; m2 = args.m2; noise_scale = args.noise_scale; l2_reg = args.l2_reg;
+        lr = args.lr; lam = args.lam; m1 = args.m1; m2 = args.m2; noise_scale = args.noise_scale; l2_reg = args.l2_reg
 
 
     added_counter = len(classifier_layer)
