@@ -110,7 +110,7 @@ def addDocs(args, args_valid=None, ax_params=None):
     failed_docs = []
     
     if args.dataset == 'nq320k':
-        tune = (ax_params is not None)
+        tune = (ax_params is not None) and (not args.tune_on_new)
         new_docs_list, train_qs, train_qs_doc_ids, queries, new_gen_q_embeddings, new_gen_q_doc_ids, classifier_layer = initialize_nq320k(args.train_q, args.num_qs, args.embeddings_path, args.model_path, args.train_q_path ,args.multiple_queries, args.min_old_q, tune=tune)
     else:
         raise ValueError(f'Invalid dataset: {args.dataset}')
@@ -343,6 +343,7 @@ def get_arguments():
     parser.add_argument("--trials", default=30, type=int, help="number of trials to run for hyperparameter tuning")
     parser.add_argument("--write_path_dir", default=None, type=str, help="path to write classifier layer to")
     parser.add_argument("--tune_parameters", action="store_true", help="flag for tune parameters")
+    parser.add_argument("--tune_on_new", action="store_true", help="flag for tune parameters")
     parser.add_argument("--multiple_queries", action="store_true", help="flag for multiple_queries")
     parser.add_argument("--num_qs", default=10, type=int, help="number of generated queries to use")
     parser.add_argument("--train_q", action="store_true", help="if we are using train queries to add documents")
