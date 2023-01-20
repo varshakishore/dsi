@@ -171,6 +171,8 @@ def addDocs(args, args_valid=None, ax_params=None):
             qs_orig = torch.clone(qs)
 
         start = time.time()
+        # Compute logits for old document classes
+        old_logits = (classifier_layer[:added_counter]*queries[:added_counter]).sum(1).detach()
         for i in range(args.lbfgs_iterations):
             if args.add_noise:
                 qs = add_noise(qs_orig, noise_scale)
@@ -186,7 +188,7 @@ def addDocs(args, args_valid=None, ax_params=None):
                     first_loss_term = first_loss_term**2
                 loss += lam * torch.sum(first_loss_term)
 
-                prod = ((x-classifier_layer[:added_counter]) * queries[:added_counter]).sum(1) + m2
+                prod = torch.einsum('d,nd->n', x, queries[:added_counter]) - old_logits + m2
                 if args.symmetric_loss:
                     loss += torch.max(torch.maximum(prod, torch.zeros(len(prod)).to('cuda')))
                 else:
@@ -285,7 +287,7 @@ def validate_on_splits(val_dir, model_path, write_path_dir=None):
     if write_path_dir is not None:
         with open(os.path.join(write_path_dir, 'log.txt'), 'a') as f:
             f.write('\n')
-            f.write('Accuracy on old test queries: \n')
+            f.write('Accuracy on old valid queries: \n')
             f.write(f'hit_at_1: {hit_at_1}\n')
             f.write(f'hit_at_5: {hit_at_5}\n')
             f.write(f'hit_at_10: {hit_at_10}\n')
@@ -298,7 +300,7 @@ def validate_on_splits(val_dir, model_path, write_path_dir=None):
     if write_path_dir is not None:
         with open(os.path.join(write_path_dir, 'log.txt'), 'a') as f:
             f.write('\n')
-            f.write('Accuracy on new test queries: \n')
+            f.write('Accuracy on new valid queries: \n')
             f.write(f'hit_at_1: {hit_at_1}\n')
             f.write(f'hit_at_5: {hit_at_5}\n')
             f.write(f'hit_at_10: {hit_at_10}\n')
@@ -650,7 +652,7 @@ def main():
         joblib.dump(timelist, os.path.join(args.write_path_dir, 'timelist.pkl'))
         with open(os.path.join(args.write_path_dir, 'log.txt'), 'a') as f:
             f.write('\n')
-            f.write(f'Hyperparameters: opt={args.optimizer}, squared_hinge={args.squared_hinge} lr={args.lr}, m1={args.m1}, m2={args.m2}, lambda={args.lam}, l2_reg={args.l2_reg}, noise_scale={args.noise_scale}\n')
+            f.write(f'Hyperparameters: opt={args.optimizer}, squared_hinge={args.squared_hinge}, num_qs={args.num_qs}, train_q={args.train_q}, min_old_q={args.min_old_q}, lr={args.lr},  m1={args.m1}, m2={args.m2}, lambda={args.lam}, l2_reg={args.l2_reg}, noise_scale={args.noise_scale}\n')
             f.write('\n')
             f.write(f'Num failed docs: {len(failed_docs)}\n')
             f.write(f'Final time: {np.asarray(timelist).sum()}\n')
