@@ -1,1 +1,1 @@
-python direct_optimize.py --train_q --dataset nq320k --optimizer lbfgs --squared_hinge --multiple_queries --lbfgs_iterations 30 --min_old_q --num_qs 10 --write_path_dir "outputs/lbgfs_test" --lr 1 --m1 3.864658880752395 --m2 2.3005170195134252 --lam 0.6797318263367496 --l2_reg 8.70752593e-7
+python direct_optimize.py --train_q --dataset nq320k --optimizer lbfgs --squared_hinge --multiple_queries --lbfgs_iterations 30 --min_old_q --num_qs 15 --write_path_dir "nq320k_results/lbgfs" --lr 1 --m1 0 --m2 0.5268030467035768 --lam 0.7434086862714558 --l2_reg 0.00044586896621086824
