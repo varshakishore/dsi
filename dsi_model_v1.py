@@ -90,9 +90,8 @@ def get_arguments():
 
     parser.add_argument(
         "--train_epochs",
-        default=None,
+        default=128,
         type=int,
-        required=True,
         help="Number of train epochs",
     )
 
@@ -113,9 +112,8 @@ def get_arguments():
 
     parser.add_argument(
         "--learning_rate",
-        default=5e-4,
+        default=5e-3,
         type=float,
-        required=True,
         help="initial learning rate for Adam",
     )
 
@@ -168,9 +166,9 @@ def get_arguments():
     )
 
     parser.add_argument(
-        "--old_docs_only",
-        action="store_true",
-        help="only finetune with old documents",
+        "--base_data_dir_new",
+        default=None,
+        help="finetune with old and new documents",
     )
 
     parser.add_argument(
@@ -178,6 +176,19 @@ def get_arguments():
         type=str,
         default="/home/vk352/dsi/data/NQ320k",
         help="where the train/test/val data is located",
+    )
+
+    parser.add_argument(
+        "--output_name",
+        type=str,
+        default="finetune_old_epoch",
+        help="name for savecd model",
+    )
+
+    parser.add_argument(
+        "--test_only",
+        action="store_true",
+        help="run eval on test set",
     )
 
     args = parser.parse_args()
@@ -312,7 +323,7 @@ def validate_script(args, tokenizer, model, doc_type=None, split=None):
         doc_class = joblib.load(os.path.join(data_dir, 'doc_class.pkl'))
     elif doc_type == "tune":
         data_dir = os.path.join(args.base_data_dir, 'tune_docs')
-        doc_class = joblib.load('/home/jl3353/dsi/data/NQ320k/tune_docs/doc_class.pkl')
+        doc_class = joblib.load(os.path.join(data_dir, 'doc_class.pkl'))
     else:
         raise ValueError(f'doc_type={doc_type} must be old, new, or tune')
 
@@ -404,7 +415,7 @@ def main():
 
     set_seed(args.seed)
 
-    if not args.validate_only:
+    if not args.validate_only or not args.test_only:
         wandb.init(project="dsi-continual")
 
     if not os.path.exists(args.output_dir):
@@ -447,12 +458,48 @@ def main():
     cache_dir='cache'
     )['train']
 
-    logger.info('validation set loade')
+    if args.base_data_dir_new or args.test_only:
+        train_data_new = datasets.load_dataset(
+        'json',
+        data_files=os.path.join(args.base_data_dir_new, 'trainqueries.json'),
+        ignore_verifications=False,
+        cache_dir='cache'
+        )['train']
 
-    # if args.old_docs_only:
-    #     train_data = train_data.filter(lambda example: example['doc_id'] <= 100000)
-    #     val_data = val_data.filter(lambda example: example['doc_id'] <= 100000)
-    #     generated_queries = generated_queries.filter(lambda example: example['doc_id'] <= 100000)
+        logger.info('new train set loaded')
+
+        generated_queries_new = datasets.load_dataset(
+            'json',
+            data_files=os.path.join(args.base_data_dir_new, 'passages_seen.json'),
+            ignore_verifications=False,
+            cache_dir='cache'
+        )['train']   
+
+        logger.info('new passages loaded')
+
+        val_data_new = datasets.load_dataset(
+        'json',
+        data_files=os.path.join(args.base_data_dir_new, 'valqueries.json'),
+        ignore_verifications=False,
+        cache_dir='cache'
+        )['train']
+
+    if args.test_only:
+        test_data = datasets.load_dataset(
+        'json',
+        data_files=os.path.join(args.base_data_dir, 'testqueries.json'),
+        ignore_verifications=False,
+        cache_dir='cache'
+        )['train']
+
+        test_data_new = datasets.load_dataset(
+        'json',
+        data_files=os.path.join(args.base_data_dir_new, 'testqueries.json'),
+        ignore_verifications=False,
+        cache_dir='cache'
+        )['train']
+
+    logger.info('test set')
 
     length_queries = len(generated_queries)
     logger.info('length')
@@ -460,6 +507,9 @@ def main():
 
     old_docs_list = joblib.load(os.path.join(args.base_data_dir, 'doc_list.pkl'))
     class_num = len(old_docs_list)
+    if args.base_data_dir_new or args.test_only:
+        new_docs_list = joblib.load(os.path.join(args.base_data_dir_new, 'doc_list.pkl'))
+        class_num += len(new_docs_list)
 
     logger.info(f'Class number {class_num}')
 
@@ -506,19 +556,45 @@ def main():
     DSIQG_train = DSIqgTrainDataset(tokenizer=tokenizer, datadict = train_data, doc_class=doc_class)
     DSIQG_val = DSIqgTrainDataset(tokenizer=tokenizer, datadict = val_data, doc_class=doc_class)
     gen_queries = GenPassageDataset(tokenizer=tokenizer, datadict = generated_queries, doc_class=doc_class)
+
     Train_DSIQG = ConcatDataset([DSIQG_train, gen_queries])
     Val_DSIQG = DSIQG_val
+
+    if args.base_data_dir_new or args.test_only:
+        DSIQG_train_new = DSIqgTrainDataset(tokenizer=tokenizer, datadict = train_data_new, doc_class=doc_class)
+        DSIQG_val_new = DSIqgTrainDataset(tokenizer=tokenizer, datadict = val_data_new, doc_class=doc_class)
+        gen_queries_new = GenPassageDataset(tokenizer=tokenizer, datadict = generated_queries_new, doc_class=doc_class)
+
+        Train_DSIQG = ConcatDataset([Train_DSIQG, DSIQG_train_new, gen_queries_new])
+        Val_DSIQG_NEW = DSIQG_val_new
+
+    if args.test_only:
+        DSIQG_test = DSIqgTrainDataset(tokenizer=tokenizer, datadict = test_data, doc_class=doc_class)
+        DSIQG_test_new = DSIqgTrainDataset(tokenizer=tokenizer, datadict = test_data_new, doc_class=doc_class)
+
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.learning_rate)
     scheduler = torch.optim.lr_scheduler.LinearLR(optimizer, start_factor=0.9, end_factor=1, total_iters=10)
 
     length = len(train_data) + len(generated_queries)
+    if args.base_data_dir_new or args.test_only:
+        length += len(train_data_new) + len(generated_queries_new)
 
     logger.info(f'dataset size:, {length}')
 
     val_length = len(val_data)
 
     logger.info(f'val_ dataset size:, {val_length}')
+
+    if args.base_data_dir_new or args.test_only:
+        val_length_new = len(val_data_new)
+        logger.info(f'val_ new dataset size:, {val_length_new}')
+
+    if args.test_only:
+        test_length = len(test_data)
+        test_length_new = len(test_data_new)
+        logger.info(f'test dataset size:, {test_length}')
+        logger.info(f'test new dataset size:, {test_length_new}')
 
 
 
@@ -540,21 +616,76 @@ def main():
                                 shuffle=True,
                                 drop_last=False)
 
+    if args.base_data_dir_new or args.test_only:
+        val_dataloader_new = DataLoader(Val_DSIQG_NEW, 
+                                    batch_size=args.batch_size,
+                                    collate_fn=IndexingCollator(
+                                    tokenizer,
+                                    padding='longest'),
+                                    shuffle=False,
+                                    drop_last=False)
+
+    if args.test_only:
+        test_dataloader = DataLoader(DSIQG_test, 
+                                    batch_size=args.batch_size,
+                                    collate_fn=IndexingCollator(
+                                    tokenizer,
+                                    padding='longest'),
+                                    shuffle=False,
+                                    drop_last=False)
+
+        test_dataloader_new = DataLoader(DSIQG_test_new, 
+                                    batch_size=args.batch_size,
+                                    collate_fn=IndexingCollator(
+                                    tokenizer,
+                                    padding='longest'),
+                                    shuffle=False,
+                                    drop_last=False)
+
     # global_step = 0
 
     # global_step=0
+    if args.test_only:
+        logger.info('Testing')
+        hit_at_1, hit_at_5, hit_at_10, mrr_at_10 = validate(args, model, test_dataloader)
+        logger.info(f'Test Accuracy: {hit_at_1} / {test_length} = {hit_at_1/test_length}')
+        logger.info(f'Test Hits@5: {hit_at_5} / {test_length} = {hit_at_5/test_length}')
+        logger.info(f'Test Hits@10: {hit_at_10} / {test_length} = {hit_at_10/test_length}')
+        logger.info(f'MRR@10: {mrr_at_10} / {test_length} = {mrr_at_10/test_length}')
+
+        hit_at_1, hit_at_5, hit_at_10, mrr_at_10 = validate(args, model, test_dataloader_new)
+        logger.info(f'Test Accuracy: {hit_at_1} / {test_length_new} = {hit_at_1/test_length_new}')
+        logger.info(f'Test Hits@5: {hit_at_5} / {test_length_new} = {hit_at_5/test_length_new}')
+        logger.info(f'Test Hits@10: {hit_at_10} / {test_length_new} = {hit_at_10/test_length_new}')
+        logger.info(f'MRR@10: {mrr_at_10} / {test_length_new} = {mrr_at_10/test_length_new}')
+
     
     hit_at_1, hit_at_5, hit_at_10, mrr_at_10 = validate(args, model, val_dataloader)
 
+    logger.info(f'Validation accuracy:')
     logger.info(f'Evaluation Accuracy: {hit_at_1} / {val_length} = {hit_at_1/val_length}')
     logger.info(f'Evaluation Hits@5: {hit_at_5} / {val_length} = {hit_at_5/val_length}')
     logger.info(f'Evaluation Hits@10: {hit_at_10} / {val_length} = {hit_at_10/val_length}')
     logger.info(f'MRR@10: {mrr_at_10} / {val_length} = {mrr_at_10/val_length}')
 
+    if args.base_data_dir_new or args.test_only:
+        hit_at_1, hit_at_5, hit_at_10, mrr_at_10 = validate(args, model, val_dataloader_new)
+
+        logger.info(f'Evaluating on the new dataset')
+        logger.info(f'Evaluation Accuracy: {hit_at_1} / {val_length_new} = {hit_at_1/val_length_new}')
+        logger.info(f'Evaluation Hits@5: {hit_at_5} / {val_length_new} = {hit_at_5/val_length_new}')
+        logger.info(f'Evaluation Hits@10: {hit_at_10} / {val_length_new} = {hit_at_10/val_length_new}')
+        logger.info(f'MRR@10: {mrr_at_10} / {val_length_new} = {mrr_at_10/val_length_new}')
+
+    if args.test_only:
+        return
 
     if not args.validate_only:
         wandb.log({'Hits@1': hit_at_1/val_length, 'Hits@5': hit_at_5/val_length, \
                 'Hits@10': hit_at_10/val_length, 'MRR@10': mrr_at_10/val_length, "epoch": 0})
+        if args.base_data_dir_new:
+            wandb.log({'Hits@1_new': hit_at_1/val_length_new, 'Hits@5_new': hit_at_5/val_length_new, \
+                    'Hits@10_new': hit_at_10/val_length_new, 'MRR@10_new': mrr_at_10/val_length_new, "epoch": 0})
 
         for i in range(args.train_epochs):
             logger.info(f"Epoch: {i+1}")
@@ -576,7 +707,19 @@ def main():
             wandb.log({'Hits@1': hit_at_1/val_length, 'Hits@5': hit_at_5/val_length, \
                 'Hits@10': hit_at_10/val_length, 'MRR@10': mrr_at_10/val_length, "epoch": i+1})
 
-            cp = save_checkpoint(args, model, i+1, "finetune_old_epoch")
+            if args.base_data_dir_new:
+                hit_at_1, hit_at_5, hit_at_10, mrr_at_10 = validate(args, model, val_dataloader_new)
+
+                logger.info(f'Evaluating on the new dataset')
+                logger.info(f'Evaluation Accuracy: {hit_at_1} / {val_length_new} = {hit_at_1/val_length_new}')
+                logger.info(f'Evaluation Hits@5: {hit_at_5} / {val_length_new} = {hit_at_5/val_length_new}')
+                logger.info(f'Evaluation Hits@10: {hit_at_10} / {val_length_new} = {hit_at_10/val_length_new}')
+                logger.info(f'MRR@10: {mrr_at_10} / {val_length_new} = {mrr_at_10/val_length_new}')
+
+                wandb.log({'Hits@1_new': hit_at_1/val_length_new, 'Hits@5_new': hit_at_5/val_length_new, \
+                    'Hits@10_new': hit_at_10/val_length_new, 'MRR@10_new': mrr_at_10/val_length_new, "epoch": i+1})
+
+            cp = save_checkpoint(args, model, i+1, args.output_name)
             logger.info('Saved checkpoint at %s', cp)
                                                
 
