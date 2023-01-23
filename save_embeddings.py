@@ -5,7 +5,7 @@ import warnings
 from typing import Optional, Tuple, Union
 from transformers.modeling_outputs import BaseModelOutput, Seq2SeqModelOutput
 from T5Model import T5Model_projection
-from BertModel import QueryClassifier
+from BertModel import QueryClassifier, DocClassifier
 from dsi_model import DSIqgTrainDataset, GenPassageDataset 
 import dsi_model_v1
 from functools import partial
@@ -70,6 +70,13 @@ def get_arguments():
         default = 'train',
         choices=['train','val', 'test', 'gen'],
         help="which split to save"
+    )
+
+    parser.add_argument(
+        "--text_type",
+        default = 'query',
+        choices=['document','query'],
+        help="save document or query embeddings"
     )
     
     args = parser.parse_args()
@@ -142,14 +149,47 @@ def main():
     ### use the same number of class no matter which split to load because the output does not need the last layer
     class_num = 100000
 
-    if args.model_name == 'T5-base':
-        model = T5Model_projection(class_num)
-        tokenizer = T5Tokenizer.from_pretrained('t5-base',cache_dir='cache')
-    elif args.model_name == 'bert-base-uncased':
-        model = QueryClassifier(class_num)
-        tokenizer = BertTokenizer.from_pretrained('bert-base-uncased',cache_dir='cache')
+    if args.text_type == 'query':
+        if args.model_name == 'T5-base':
+            model = T5Model_projection(class_num)
+            tokenizer = T5Tokenizer.from_pretrained('t5-base',cache_dir='cache')
+        elif args.model_name == 'bert-base-uncased':
+            print('Using question model...')
+            model = QueryClassifier(class_num)
+            tokenizer = BertTokenizer.from_pretrained('bert-base-uncased',cache_dir='cache')
+    elif args.text_type == 'document':
+        if args.model_name == 'T5-base':
+            model = T5Model_projection(class_num)
+            tokenizer = T5Tokenizer.from_pretrained('t5-base',cache_dir='cache')
+        elif args.model_name == 'bert-base-uncased':
+            print('Using ctx_model...')
+            model = DocClassifier(class_num)
+            tokenizer = BertTokenizer.from_pretrained('bert-base-uncased',cache_dir='cache')
 
-    if args.dataset == 'nq320k':
+    if args.text_type == 'document' and args.dataset == 'nq320k':
+        # HARDCODE 
+        doc2class = joblib.load('/home/vk352/dsi/data/NQ320k/old_docs/doc_class.pkl')
+        dataset_cls = partial(dsi_model_v1.DSIqgTrainDataset, doc_class=doc2class)
+        file_path = '/home/cw862/DPR_data_final/NQ320k_docs.json'
+        queries = datasets.load_dataset(
+            'json',
+            data_files=file_path,
+            ignore_verifications=False,
+            cache_dir='cache'
+            )['train']
+    elif args.text_type == 'document' and args.dataset == 'msmarco':
+        doc2class = joblib.load('/home/cw862/MSMARCO/old_docs/')
+        dataset_cls = partial(dsi_model_v1.DSIqgTrainDataset, doc_class=doc2class)
+        # TODO
+        file_path = '/home/cw862/DPR_data_final/NQ320k_docs.json'
+        queries = datasets.load_dataset(
+            'json',
+            data_files=file_path,
+            ignore_verifications=False,
+            cache_dir='cache'
+            )['train']
+
+    elif args.dataset == 'nq320k' and args.text_type == 'query':
         data_dirs = {'data': '/home/vk352/dsi/data/NQ320k',
                     'old': '/home/vk352/dsi/data/NQ320k/old_docs/',
                     'tune': '/home/vk352/dsi/data/NQ320k/tune_docs/',
@@ -163,7 +203,7 @@ def main():
             raise ValueError(f'{args.doc_split} split not supported for {args.dataset} dataset')
         dataset_cls = partial(dsi_model_v1.DSIqgTrainDataset, doc_class=doc2class)
         gen_dataset_cls = partial(dsi_model_v1.GenPassageDataset, doc_class=doc2class)
-    elif args.dataset == 'msmarco':
+    elif args.dataset == 'msmarco' and args.text_type == 'query':
         data_dirs = {'data': '/home/cw862/MSMARCO',
                     'old': '/home/cw862/MSMARCO/old_docs/',
                     'tune': '/home/cw862/MSMARCO/tune_docs/',
@@ -181,29 +221,29 @@ def main():
     else:
         raise ValueError(f'{args.dataset} dataset not supported')
 
+    if args.text_type == 'query':
+        if args.split == 'gen':
+            file_path = os.path.join(data_dirs[args.doc_split], 'passages_seen.json')
+            
+            generated_queries = datasets.load_dataset(
+            'json',
+            data_files=file_path,
+            ignore_verifications=False,
+            cache_dir='cache'
+            )['train'] 
 
-    if args.split == 'gen':
-        file_path = os.path.join(data_dirs[args.doc_split], 'passages_seen.json')
-        
-        generated_queries = datasets.load_dataset(
-        'json',
-        data_files=file_path,
-        ignore_verifications=False,
-        cache_dir='cache'
-        )['train'] 
+            queries = gen_dataset_cls(tokenizer=tokenizer, datadict = generated_queries)
+        else:
+            
+            file_path = os.path.join(data_dirs[args.doc_split], f'{args.split}queries.json')
+            queries = datasets.load_dataset(
+            'json',
+            data_files=file_path,
+            ignore_verifications=False,
+            cache_dir='cache'
+            )['train']
 
-        queries = gen_dataset_cls(tokenizer=tokenizer, datadict = generated_queries)
-    else:
-        
-        file_path = os.path.join(data_dirs[args.doc_split], f'{args.split}queries.json')
-        queries = datasets.load_dataset(
-        'json',
-        data_files=file_path,
-        ignore_verifications=False,
-        cache_dir='cache'
-        )['train']
-
-        queries = dataset_cls(tokenizer=tokenizer, datadict = queries)
+    queries = dataset_cls(tokenizer=tokenizer, datadict = queries)
 
     dataloader = DataLoader(queries, 
                             batch_size=3500,
@@ -239,12 +279,19 @@ def main():
 
         print('embedding file written.')
 
-    else:
+    elif args.text_type == 'query':
         joblib.dump(embedding_matrix, os.path.join(args.output_dir,f'{args.doc_split}-{args.split}-embeddings.pkl'))
         class2doc = {v:k for k, v in doc2class.items()}
         assert len(class2doc) == len(doc2class)
         doc_ids = torch.tensor([class2doc[i.item()] for i in labels], dtype=torch.long)
         joblib.dump(doc_ids, os.path.join(args.output_dir, f'{args.doc_split}-{args.split}-docids.pkl'))
+
+    elif args.text_type == 'document':
+        joblib.dump(embedding_matrix, os.path.join(args.output_dir, 'document_embedding.pkl'))
+        class2doc = {v:k for k, v in doc2class.items()}
+        assert len(class2doc) == len(doc2class)
+        doc_ids = torch.tensor([class2doc[i.item()] for i in labels], dtype=torch.long)
+        joblib.dump(doc_ids, os.path.join(args.output_dir, f'document-docids.pkl'))
 
 
 if __name__ == "__main__":
