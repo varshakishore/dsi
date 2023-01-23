@@ -49,5 +49,25 @@ class QueryClassifier(nn.Module):
         logits = self.classifier(q_embs)
         return logits
 
+class DocClassifier(nn.Module):
+    """ Bi-Encoder model component. Encapsulates query/question and context/passage encoders.
+    """
+    def __init__(self, class_num):
+        super(DocClassifier, self).__init__()
+        # note here we only have ctxt encoder
+        self.ctx_model = HFBertEncoder.init_encoder()
+        self.classifier = nn.Linear(self.ctx_model.config.hidden_size, class_num, bias=False)
+
+
+    def doc_emb(self, input_ids, attention_mask):
+        sequence_output, pooled_output, hidden_states = self.ctx_model(input_ids, attention_mask)
+        return pooled_output
+    def forward(self, query_ids, attention_mask_q, return_hidden_emb=False):
+        doc_embs = self.doc_emb(query_ids, attention_mask_q)
+        if return_hidden_emb:
+            return doc_embs
+        logits = self.classifier(doc_embs)
+        return logits
+
 
 
