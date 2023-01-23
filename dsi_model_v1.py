@@ -231,6 +231,13 @@ def get_arguments():
         help="like dsi perform indexing with doc text as well",
     )
 
+    parser.add_argument(
+        "--get_subsampled_train_dataloader",
+        action="store_true",
+        help="randomly sample equal number of old docs",
+    )
+    
+
     args = parser.parse_args()
 
     return args
@@ -450,6 +457,42 @@ def set_seed(seed):
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
 
+def load_dataset_helper(path):
+    data = datasets.load_dataset(
+    'json',
+    data_files=path,
+    ignore_verifications=False,
+    cache_dir='cache'
+    )['train']
+
+    return data
+
+def get_subsampled_train_dataloader(old_docs_list, new_docs_list, train_data, train_data_new, generated_queries, generated_queries_new, tokenizer, doc_class, batch_size):
+    random.shuffle(old_docs_list)
+    filter_docs = old_docs_list[:len(new_docs_list)]
+    import pdb; pdb.set_trace()
+    train_data_tp = train_data.filter(lambda example: example['doc_id'] in filter_docs)
+    train_data_new_tp = train_data_new.filter(lambda example: example['doc_id'] in filter_docs)
+    generated_queries_tp = generated_queries.filter(lambda example: example['doc_id'] in filter_docs)
+    generated_queries_new_tp = generated_queries_new.filter(lambda example: example['doc_id'] in filter_docs)
+
+    DSIQG_train_tp = DSIqgTrainDataset(tokenizer=tokenizer, datadict = train_data_tp, doc_class=doc_class)
+    DSIQG_train_new_tp = DSIqgTrainDataset(tokenizer=tokenizer, datadict = train_data_new_tp, doc_class=doc_class)
+    gen_queries_tp = GenPassageDataset(tokenizer=tokenizer, datadict = generated_queries_tp, doc_class=doc_class)
+    gen_queries_new_tp = GenPassageDataset(tokenizer=tokenizer, datadict = generated_queries_new_tp, doc_class=doc_class)
+
+    train_dataset_tp = ConcatDataset([DSIQG_train_tp, DSIQG_train_new_tp, gen_queries_tp, gen_queries_new_tp])
+
+    train_dataloader = DataLoader(train_dataset_tp, 
+                                batch_size=batch_size,
+                                collate_fn=IndexingCollator(
+                                tokenizer,
+                                padding='longest'),
+                                shuffle=True,
+                                drop_last=False)
+
+    return train_dataloader
+
 def main():
 
     args = get_arguments()
@@ -458,7 +501,7 @@ def main():
 
     if not args.validate_only or not args.test_only:
         if args.wandb_name:
-            wandb.init(project="dsi-continual", name=args.wandb_name)
+            wandb.init(project="dsi-continual-baselines", name=args.wandb_name)
 
     if not os.path.exists(args.output_dir):
         os.mkdir(args.output_dir)
@@ -475,94 +518,30 @@ def main():
 
     logging.info(f'Device: {device}')
 
-    train_data = datasets.load_dataset(
-    'json',
-    data_files=os.path.join(args.base_data_dir, 'old_docs', 'trainqueries.json'),
-    ignore_verifications=False,
-    cache_dir='cache'
-    )['train']
+    train_data = load_dataset_helper(os.path.join(args.base_data_dir, 'old_docs', 'trainqueries.json'))
+    generated_queries = load_dataset_helper(os.path.join(args.base_data_dir, 'old_docs', 'passages_seen.json'))
+    val_data = load_dataset_helper(os.path.join(args.base_data_dir, 'old_docs', 'valqueries.json'))
 
-    print('train set loaded')
-
-    generated_queries = datasets.load_dataset(
-        'json',
-        data_files=os.path.join(args.base_data_dir, 'old_docs', 'passages_seen.json'),
-        ignore_verifications=False,
-        cache_dir='cache'
-    )['train']   
-
-    logger.info('passages loaded')
-
-    val_data = datasets.load_dataset(
-    'json',
-    data_files=os.path.join(args.base_data_dir, 'old_docs', 'valqueries.json'),
-    ignore_verifications=False,
-    cache_dir='cache'
-    )['train']
+    logger.info('train, generated, val loaded')
 
     if args.doc_index:
-        doc_data = datasets.load_dataset(
-        'json',
-        data_files=os.path.join(args.base_data_dir, 'old_docs', 'doc.json'),
-        ignore_verifications=False,
-        cache_dir='cache'
-        )['train']
-
+        doc_data = load_dataset_helper(os.path.join(args.base_data_dir, 'old_docs', 'doc.json'))
 
     if args.base_data_dir_new or args.test_only:
-        train_data_new = datasets.load_dataset(
-        'json',
-        data_files=os.path.join(args.base_data_dir_new, 'trainqueries.json'),
-        ignore_verifications=False,
-        cache_dir='cache'
-        )['train']
+        train_data_new = load_dataset_helper(os.path.join(args.base_data_dir_new, 'trainqueries.json'))
+        generated_queries_new = load_dataset_helper(os.path.join(args.base_data_dir_new, 'passages_seen.json'))
+        val_data_new = load_dataset_helper(os.path.join(args.base_data_dir_new, 'valqueries.json'))
 
-        logger.info('new train set loaded')
-
-        generated_queries_new = datasets.load_dataset(
-            'json',
-            data_files=os.path.join(args.base_data_dir_new, 'passages_seen.json'),
-            ignore_verifications=False,
-            cache_dir='cache'
-        )['train']   
-
-        logger.info('new passages loaded')
-
-        val_data_new = datasets.load_dataset(
-        'json',
-        data_files=os.path.join(args.base_data_dir_new, 'valqueries.json'),
-        ignore_verifications=False,
-        cache_dir='cache'
-        )['train']
+        logger.info('new train, generated, val set loaded')
 
         if args.doc_index:
-            doc_data_new = datasets.load_dataset(
-            'json',
-            data_files=os.path.join(args.base_data_dir_new, 'doc.json'),
-            ignore_verifications=False,
-            cache_dir='cache'
-            )['train']
+            doc_data_new = load_dataset_helper(os.path.join(args.base_data_dir_new, 'doc.json'))
 
     if args.test_only:
-        test_data = datasets.load_dataset(
-        'json',
-        data_files=os.path.join(args.base_data_dir, 'old_docs', 'testqueries.json'),
-        ignore_verifications=False,
-        cache_dir='cache'
-        )['train']
+        test_data = load_dataset_helper(os.path.join(args.base_data_dir, 'old_docs', 'testqueries.json'))
+        test_data_new = load_dataset_helper(os.path.join(args.base_data_dir_new, 'testqueries.json'))
 
-        test_data_new = datasets.load_dataset(
-        'json',
-        data_files=os.path.join(args.base_data_dir_new, 'testqueries.json'),
-        ignore_verifications=False,
-        cache_dir='cache'
-        )['train']
-
-    logger.info('test set')
-
-    length_queries = len(generated_queries)
-    logger.info('length')
-    logger.info(length_queries)
+        logger.info('test set loaded')
 
     old_docs_list = joblib.load(os.path.join(args.base_data_dir, 'old_docs', 'doc_list.pkl'))
     class_num = len(old_docs_list)
@@ -636,7 +615,6 @@ def main():
     if args.test_only:
         DSIQG_test = DSIqgTrainDataset(tokenizer=tokenizer, datadict = test_data, doc_class=doc_class)
         DSIQG_test_new = DSIqgTrainDataset(tokenizer=tokenizer, datadict = test_data_new, doc_class=doc_class)
-
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.learning_rate)
     scheduler = torch.optim.lr_scheduler.LinearLR(optimizer, start_factor=0.9, end_factor=1, total_iters=10)
@@ -758,6 +736,9 @@ def main():
         for i in range(args.train_epochs):
             logger.info(f"Epoch: {i+1}")
             print(f"Learning Rate: {scheduler.get_last_lr()}")
+            if args.get_subsampled_train_dataloader:
+                train_dataloader = get_subsampled_train_dataloader(old_docs_list, new_docs_list, train_data, train_data_new, 
+                    generated_queries, generated_queries_new, tokenizer, doc_class, args.batch_size)
             train(args, model, train_dataloader, optimizer, length)
 
             # logger.info(f'Train Accuracy: {correct_ratio_train}')
