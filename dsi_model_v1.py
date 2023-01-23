@@ -48,6 +48,33 @@ class DSIqgTrainDataset(Dataset):
                                   max_length=32).input_ids[0]
         
         return input_ids, self.doc_class[data['doc_id']]
+
+class DSIqgDocDataset(Dataset):
+    def __init__(
+            self,
+            tokenizer: PreTrainedTokenizer,
+            datadict,
+            doc_class):
+        super().__init__()
+        self.train_data = datadict
+        
+        self.tokenizer = tokenizer
+        self.total_len = len(self.train_data)
+        self.doc_class = doc_class
+
+
+    def __len__(self):
+        return self.total_len
+
+    def __getitem__(self, idx):
+        data = self.train_data[idx]
+
+        input_ids = self.tokenizer(data['doc_text'],
+                                   return_tensors="pt",
+                                   truncation="only_first",
+                                  max_length=32).input_ids[0]
+        
+        return input_ids, self.doc_class[data['doc_id']]
     
 
 class GenPassageDataset(Dataset):
@@ -191,6 +218,19 @@ def get_arguments():
         help="run eval on test set",
     )
 
+    parser.add_argument(
+        "--wandb_name",
+        type=str,
+        default=None,
+        help="name for wandb",
+    )
+    
+    parser.add_argument(
+        "--doc_index",
+        action="store_true",
+        help="like dsi perform indexing with doc text as well",
+    )
+
     args = parser.parse_args()
 
     return args
@@ -240,7 +280,8 @@ def train(args, model, train_dataloader, optimizer, length):
 
         if (i + 1) % args.logging_step == 0:
             logger.info(f'Train step: {i}, loss: {(tr_loss/i)}')
-            wandb.log({'train_loss': tr_loss/i})
+            if args.wandb_name:
+                wandb.log({'train_loss': tr_loss/i})
 
         loss.backward()
         optimizer.step()
@@ -416,7 +457,8 @@ def main():
     set_seed(args.seed)
 
     if not args.validate_only or not args.test_only:
-        wandb.init(project="dsi-continual")
+        if args.wandb_name:
+            wandb.init(project="dsi-continual", name=args.wandb_name)
 
     if not os.path.exists(args.output_dir):
         os.mkdir(args.output_dir)
@@ -435,7 +477,7 @@ def main():
 
     train_data = datasets.load_dataset(
     'json',
-    data_files=os.path.join(args.base_data_dir, 'trainqueries.json'),
+    data_files=os.path.join(args.base_data_dir, 'old_docs', 'trainqueries.json'),
     ignore_verifications=False,
     cache_dir='cache'
     )['train']
@@ -444,7 +486,7 @@ def main():
 
     generated_queries = datasets.load_dataset(
         'json',
-        data_files=os.path.join(args.base_data_dir, 'passages_seen.json'),
+        data_files=os.path.join(args.base_data_dir, 'old_docs', 'passages_seen.json'),
         ignore_verifications=False,
         cache_dir='cache'
     )['train']   
@@ -453,10 +495,19 @@ def main():
 
     val_data = datasets.load_dataset(
     'json',
-    data_files=os.path.join(args.base_data_dir, 'valqueries.json'),
+    data_files=os.path.join(args.base_data_dir, 'old_docs', 'valqueries.json'),
     ignore_verifications=False,
     cache_dir='cache'
     )['train']
+
+    if args.doc_index:
+        doc_data = datasets.load_dataset(
+        'json',
+        data_files=os.path.join(args.base_data_dir, 'old_docs', 'doc.json'),
+        ignore_verifications=False,
+        cache_dir='cache'
+        )['train']
+
 
     if args.base_data_dir_new or args.test_only:
         train_data_new = datasets.load_dataset(
@@ -484,10 +535,18 @@ def main():
         cache_dir='cache'
         )['train']
 
+        if args.doc_index:
+            doc_data_new = datasets.load_dataset(
+            'json',
+            data_files=os.path.join(args.base_data_dir_new, 'doc.json'),
+            ignore_verifications=False,
+            cache_dir='cache'
+            )['train']
+
     if args.test_only:
         test_data = datasets.load_dataset(
         'json',
-        data_files=os.path.join(args.base_data_dir, 'testqueries.json'),
+        data_files=os.path.join(args.base_data_dir, 'old_docs', 'testqueries.json'),
         ignore_verifications=False,
         cache_dir='cache'
         )['train']
@@ -505,7 +564,7 @@ def main():
     logger.info('length')
     logger.info(length_queries)
 
-    old_docs_list = joblib.load(os.path.join(args.base_data_dir, 'doc_list.pkl'))
+    old_docs_list = joblib.load(os.path.join(args.base_data_dir, 'old_docs', 'doc_list.pkl'))
     class_num = len(old_docs_list)
     if args.base_data_dir_new or args.test_only:
         new_docs_list = joblib.load(os.path.join(args.base_data_dir_new, 'doc_list.pkl'))
@@ -551,13 +610,16 @@ def main():
 
     logger.info('model loaded')
 
-    doc_class = joblib.load(os.path.join(args.base_data_dir, 'doc_class.pkl'))
+    doc_class = joblib.load(os.path.join(args.base_data_dir, 'old_docs', 'doc_class.pkl'))
 
     DSIQG_train = DSIqgTrainDataset(tokenizer=tokenizer, datadict = train_data, doc_class=doc_class)
     DSIQG_val = DSIqgTrainDataset(tokenizer=tokenizer, datadict = val_data, doc_class=doc_class)
     gen_queries = GenPassageDataset(tokenizer=tokenizer, datadict = generated_queries, doc_class=doc_class)
 
     Train_DSIQG = ConcatDataset([DSIQG_train, gen_queries])
+    if args.doc_index:
+        DSIQG_doc = DSIqgDocDataset(tokenizer=tokenizer, datadict = doc_data, doc_class=doc_class)
+        Train_DSIQG = ConcatDataset([Train_DSIQG, DSIQG_doc])
     Val_DSIQG = DSIQG_val
 
     if args.base_data_dir_new or args.test_only:
@@ -566,6 +628,9 @@ def main():
         gen_queries_new = GenPassageDataset(tokenizer=tokenizer, datadict = generated_queries_new, doc_class=doc_class)
 
         Train_DSIQG = ConcatDataset([Train_DSIQG, DSIQG_train_new, gen_queries_new])
+        if args.doc_index:
+            DSIQG_doc_new = DSIqgDocDataset(tokenizer=tokenizer, datadict = doc_data_new, doc_class=doc_class)
+            Train_DSIQG = ConcatDataset([Train_DSIQG, DSIQG_doc_new])
         Val_DSIQG_NEW = DSIQG_val_new
 
     if args.test_only:
@@ -579,6 +644,8 @@ def main():
     length = len(train_data) + len(generated_queries)
     if args.base_data_dir_new or args.test_only:
         length += len(train_data_new) + len(generated_queries_new)
+    if args.doc_index:
+        length += len(doc_data)
 
     logger.info(f'dataset size:, {length}')
 
@@ -681,11 +748,12 @@ def main():
         return
 
     if not args.validate_only:
-        wandb.log({'Hits@1': hit_at_1/val_length, 'Hits@5': hit_at_5/val_length, \
-                'Hits@10': hit_at_10/val_length, 'MRR@10': mrr_at_10/val_length, "epoch": 0})
-        if args.base_data_dir_new:
-            wandb.log({'Hits@1_new': hit_at_1/val_length_new, 'Hits@5_new': hit_at_5/val_length_new, \
-                    'Hits@10_new': hit_at_10/val_length_new, 'MRR@10_new': mrr_at_10/val_length_new, "epoch": 0})
+        if args.wandb_name:
+            wandb.log({'Hits@1': hit_at_1/val_length, 'Hits@5': hit_at_5/val_length, \
+                    'Hits@10': hit_at_10/val_length, 'MRR@10': mrr_at_10/val_length, "epoch": 0})
+            if args.base_data_dir_new:
+                wandb.log({'Hits@1_new': hit_at_1/val_length_new, 'Hits@5_new': hit_at_5/val_length_new, \
+                        'Hits@10_new': hit_at_10/val_length_new, 'MRR@10_new': mrr_at_10/val_length_new, "epoch": 0})
 
         for i in range(args.train_epochs):
             logger.info(f"Epoch: {i+1}")
@@ -704,8 +772,9 @@ def main():
             logger.info(f'Evaluation Hits@10: {hit_at_10} / {val_length} = {hit_at_10/val_length}')
             logger.info(f'MRR@10: {mrr_at_10} / {val_length} = {mrr_at_10/val_length}')
 
-            wandb.log({'Hits@1': hit_at_1/val_length, 'Hits@5': hit_at_5/val_length, \
-                'Hits@10': hit_at_10/val_length, 'MRR@10': mrr_at_10/val_length, "epoch": i+1})
+            if args.wandb_name:
+                wandb.log({'Hits@1': hit_at_1/val_length, 'Hits@5': hit_at_5/val_length, \
+                    'Hits@10': hit_at_10/val_length, 'MRR@10': mrr_at_10/val_length, "epoch": i+1})
 
             if args.base_data_dir_new:
                 hit_at_1, hit_at_5, hit_at_10, mrr_at_10 = validate(args, model, val_dataloader_new)
@@ -716,8 +785,9 @@ def main():
                 logger.info(f'Evaluation Hits@10: {hit_at_10} / {val_length_new} = {hit_at_10/val_length_new}')
                 logger.info(f'MRR@10: {mrr_at_10} / {val_length_new} = {mrr_at_10/val_length_new}')
 
-                wandb.log({'Hits@1_new': hit_at_1/val_length_new, 'Hits@5_new': hit_at_5/val_length_new, \
-                    'Hits@10_new': hit_at_10/val_length_new, 'MRR@10_new': mrr_at_10/val_length_new, "epoch": i+1})
+                if args.wandb_name:
+                    wandb.log({'Hits@1_new': hit_at_1/val_length_new, 'Hits@5_new': hit_at_5/val_length_new, \
+                        'Hits@10_new': hit_at_10/val_length_new, 'MRR@10_new': mrr_at_10/val_length_new, "epoch": i+1})
 
             cp = save_checkpoint(args, model, i+1, args.output_name)
             logger.info('Saved checkpoint at %s', cp)
