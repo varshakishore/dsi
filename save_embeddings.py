@@ -280,11 +280,15 @@ def main():
         print('embedding file written.')
 
     elif args.text_type == 'query':
+        print(f'Writing {args.doc_split}-{args.split}-embeddings.pkl')
         joblib.dump(embedding_matrix, os.path.join(args.output_dir,f'{args.doc_split}-{args.split}-embeddings.pkl'))
+        print('Done.')
         class2doc = {v:k for k, v in doc2class.items()}
         assert len(class2doc) == len(doc2class)
         doc_ids = torch.tensor([class2doc[i.item()] for i in labels], dtype=torch.long)
+        print(f'Writing {args.doc_split}-{args.split}-docids.pkl')
         joblib.dump(doc_ids, os.path.join(args.output_dir, f'{args.doc_split}-{args.split}-docids.pkl'))
+        print('Done.')
 
     elif args.text_type == 'document':
         joblib.dump(embedding_matrix, os.path.join(args.output_dir, 'document_embedding.pkl'))
