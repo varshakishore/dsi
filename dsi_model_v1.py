@@ -376,9 +376,15 @@ def validate_script(args, tokenizer, model, doc_type=None, split=None):
     elif doc_type == "new":
         data_dir = os.path.join(args.base_data_dir, 'new_docs')
         doc_class = joblib.load(os.path.join(data_dir, 'doc_class.pkl'))
+        if 'MSMARCO' in args.base_data_dir:
+            doc_list = joblib.load(os.path.join(data_dir, 'doc_list.pkl'))
+            doc_list = doc_list[:10000]
     elif doc_type == "tune":
         data_dir = os.path.join(args.base_data_dir, 'tune_docs')
         doc_class = joblib.load(os.path.join(data_dir, 'doc_class.pkl'))
+        if 'MSMARCO' in args.base_data_dir:
+            doc_list = joblib.load(os.path.join(data_dir, 'doc_list.pkl'))
+            doc_list = doc_list[:1000]
     else:
         raise ValueError(f'doc_type={doc_type} must be old, new, or tune')
 
@@ -434,8 +440,11 @@ def validate_script(args, tokenizer, model, doc_type=None, split=None):
         print('unseen generated queries loaded')
     else:
         raise ValueError(f'split={split} must be train, valid, test, seenq, or unseenq')
+    
+    if 'MSMARCO' in args.base_data_dir and doc_type in {'new', 'tune'}:
+        data = data.filter(lambda example: example['doc_id'] in doc_list)
 
-    if split == "train" or split == "valid":
+    if split == "train" or split == "valid" or split == 'test':
         dataset =  DSIqgTrainDataset(tokenizer=tokenizer, datadict = data, doc_class = doc_class)
 
     elif split == "seenq" or split == "unseenq":
