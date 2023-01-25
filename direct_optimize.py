@@ -9,14 +9,19 @@ from torch.optim import LBFGS, SGD
 from tqdm import tqdm
 from functools import partial
 from transformers import BertTokenizer
+from datetime import datetime
+import json
+import plotly.graph_objects as go
 
 
 # ax imports for hyperparameter optimization
 from ax.plot.contour import plot_contour
+from ax.plot.slice import plot_slice
 from ax.plot.trace import optimization_trace_single_method
 from ax.service.managed_loop import optimize
 from ax.utils.notebook.plotting import render, init_notebook_plotting
 from ax.service.utils.report_utils import exp_to_df
+
 
 from dsi_model_v1 import validate_script
 from optimizer import ArmijoSGD
@@ -36,7 +41,8 @@ def initialize_model(model_path, classifier_matrix):
 
     return model, tokenizer
 
-def initialize_nq320k(train_q,
+def initialize_nq320k(data_dir,
+                train_q,
                 num_qs,
                 embeddings_path, 
                 model_path,
@@ -46,7 +52,6 @@ def initialize_nq320k(train_q,
                 tune=False):
     set_seed()
 
-    data_dir = '/home/vk352/dsi/data/NQ320k'
     old_docs_list = joblib.load(os.path.join(data_dir, 'old_docs', 'doc_list.pkl'))
     class_num = len(old_docs_list)
     
@@ -67,26 +72,42 @@ def initialize_nq320k(train_q,
     old_q_doc_ids = joblib.load(os.path.join(embeddings_path, 'old-train-docids.pkl')).to(classifier_layer.device)
 
     old_qeries = torch.zeros(len(old_docs_list), 768).to(classifier_layer.device)
-    assert min_old_q, 'Must use min_old_q'
-    for i in tqdm(range(len(old_docs_list)), desc='Selecting min of old queries'):
-        # Extract generated queries for the document
-        gen_q_embs = old_gen_q_embeddings[old_gen_q_doc_ids == old_docs_list[i]][:num_qs]  # (num_qs, 768)
-        # Extract natural queries for the document
-        q_embs = old_q_embeddings[old_q_doc_ids == old_docs_list[i]]  # (*, 768)
-        # Concatenate the two query embeddings
-        q_embs = torch.cat([gen_q_embs, q_embs], dim=0)  # (*, 768)
-        # Compute scores for each query
-        doc_scores = torch.matmul(q_embs, classifier_layer[i])    # (num_qs)
-        # Select the query with the lowest score
-        min_idx = doc_scores.argmin()
-        # Use the selected query embedding
-        old_qeries[i] = q_embs[min_idx]
+    if min_old_q:
+        for i in tqdm(range(len(old_docs_list)), desc='Selecting min of old queries'):
+            # Extract generated queries for the document
+            gen_q_embs = old_gen_q_embeddings[old_gen_q_doc_ids == old_docs_list[i]][:num_qs]  # (num_qs, 768)
+            # Extract natural queries for the document
+            q_embs = old_q_embeddings[old_q_doc_ids == old_docs_list[i]]  # (*, 768)
+            # Concatenate the two query embeddings
+            q_embs = torch.cat([gen_q_embs, q_embs], dim=0)  # (*, 768)
+            # Compute scores for each query
+            doc_scores = torch.matmul(q_embs, classifier_layer[i])    # (num_qs)
+            # Select the query with the lowest score
+            min_idx = doc_scores.argmin()
+            # Use the selected query embedding
+            old_qeries[i] = q_embs[min_idx]
+    else:
+        for i in tqdm(range(len(old_docs_list)), desc='Selecting mean of old queries'):
+            # Extract generated queries for the document
+            gen_q_embs = old_gen_q_embeddings[old_gen_q_doc_ids == old_docs_list[i]][:num_qs]  # (num_qs, 768)
+            # Extract natural queries for the document
+            q_embs = old_q_embeddings[old_q_doc_ids == old_docs_list[i]]  # (*, 768)
+            # Concatenate the two query embeddings
+            q_embs = torch.cat([gen_q_embs, q_embs], dim=0)  # (*, 768)
+            # Use the mean of the query embeddings
+            old_qeries[i] = torch.mean(q_embs, dim=0)
 
     if tune:
         doc_split = 'tune'
+        if 'MSMARCO' in data_dir:
+            num_docs = 1000
     else:
         doc_split = 'new'
+        if 'MSMARCO' in data_dir:
+            num_docs = 10000
     new_docs_list = joblib.load(os.path.join(data_dir, f'{doc_split}_docs', 'doc_list.pkl'))
+    if 'MSMARCO' in data_dir:
+        new_docs_list = new_docs_list[:num_docs]
     new_gen_q_embeddings = joblib.load(os.path.join(embeddings_path, f'{doc_split}-gen-embeddings.pkl'))
     new_gen_q_doc_ids = joblib.load(os.path.join(embeddings_path, f'{doc_split}-gen-docids.pkl'))
 
@@ -98,7 +119,7 @@ def initialize_nq320k(train_q,
         train_qs = None
         train_qs_doc_ids = None
 
-    return new_docs_list, train_qs, train_qs_doc_ids, old_qeries, new_gen_q_embeddings, new_gen_q_doc_ids, classifier_layer
+    return old_docs_list, new_docs_list, train_qs, train_qs_doc_ids, old_qeries, new_gen_q_embeddings, new_gen_q_doc_ids, classifier_layer, old_q_embeddings, old_q_doc_ids, old_gen_q_embeddings, old_gen_q_doc_ids
 
 def add_noise(x, scale):
     return x + torch.randn(x.shape[0],x.shape[1]).to('cuda') * torch.norm(x, dim=1)[:, None] * scale
@@ -109,9 +130,9 @@ def addDocs(args, args_valid=None, ax_params=None):
     timelist = []
     failed_docs = []
     
-    if args.dataset == 'nq320k':
+    if args.dataset in ['nq320k', 'msmarco']:
         tune = (ax_params is not None) and (not args.tune_on_new)
-        new_docs_list, train_qs, train_qs_doc_ids, queries, new_gen_q_embeddings, new_gen_q_doc_ids, classifier_layer = initialize_nq320k(args.train_q, args.num_qs, args.embeddings_path, args.model_path, args.train_q_path ,args.multiple_queries, args.min_old_q, tune=tune)
+        old_docs_list, new_docs_list, train_qs, train_qs_doc_ids, queries, new_gen_q_embeddings, new_gen_q_doc_ids, classifier_layer, old_q_embeddings, old_q_doc_ids, old_gen_q_embeddings, old_gen_q_doc_ids = initialize_nq320k(args.data_dir, args.train_q, args.num_qs, args.embeddings_path, args.model_path, args.train_q_path ,args.multiple_queries, args.min_old_q, tune=tune)
     else:
         raise ValueError(f'Invalid dataset: {args.dataset}')
     
@@ -132,7 +153,7 @@ def addDocs(args, args_valid=None, ax_params=None):
     # add rows for the new docs
     classifier_layer = torch.cat((classifier_layer, torch.zeros(num_new_docs, embedding_size).to(classifier_layer.device)))
     queries = torch.cat((queries, torch.zeros(num_new_docs, embedding_size, device=queries.device)))
-
+        
     for done, doc_id in enumerate(tqdm(new_docs_list, desc='Adding documents')):
         # this set of hyperparameters is not working
         if len(timelist) == 50 and len(failed_docs) >= 25 and ax_params: 
@@ -151,7 +172,7 @@ def addDocs(args, args_valid=None, ax_params=None):
         x = x.to('cuda')
         x.requires_grad = True
         if args.optimizer == 'lbfgs':
-            optimizer = LBFGS([x], lr=lr, tolerance_change=.001, line_search_fn='strong_wolfe')
+            optimizer = LBFGS([x], lr=lr, tolerance_change=args.lbfgs_tolerance, line_search_fn='strong_wolfe')
         elif args.optimizer == 'sgd':
             optimizer = SGD([x], lr=lr)
         elif args.optimizer == 'armijo_sgd': # SGD + line search
@@ -168,6 +189,9 @@ def addDocs(args, args_valid=None, ax_params=None):
             train_q = train_q.to('cuda')
             # use generated queries and train queries
             qs = torch.cat((qs, train_q))
+        
+        if args.mean_new_q:
+            qs = torch.mean(qs, 0, keepdim=True)
         # compute document score for each query
         prod_to_old = torch.einsum('nd,md->nm', classifier_layer[:added_counter], qs)
         max_vals = torch.max(prod_to_old, dim=0).values
@@ -186,7 +210,6 @@ def addDocs(args, args_valid=None, ax_params=None):
             x.requires_grad = True
             def closure():
                 loss = 0
-                
                 # the other version of loss needs to debug 
                 # if args.symmetric_loss:
                     # loss += torch.sum(torch.nn.functional.relu((prod_to_old+m1) - torch.einsum('md,d->m',qs, x)))
@@ -203,8 +226,8 @@ def addDocs(args, args_valid=None, ax_params=None):
                     if args.squared_hinge:
                         second_loss_term = second_loss_term**2
                     loss += (1-lam)*(second_loss_term).sum()
-
-                loss += l2_reg*torch.mean(x**2)
+                    
+                loss += l2_reg*torch.sum(x**2)
 
                 optimizer.zero_grad()
                 loss.backward()
@@ -215,9 +238,14 @@ def addDocs(args, args_valid=None, ax_params=None):
             # print(f'Loss: {loss.item()}')
             # print(f'Grad: {torch.linalg.vector_norm(x.grad).item()}')
             # print(f'Delta norm: {torch.linalg.vector_norm(x-x_prev).item()}')
+            
+            # Check if any element of tensor x is NaN
+            if torch.isnan(x).any() and ax_params is not None:
+                print("NaN detected, skipping...")
+                return 0.
             with torch.no_grad():
                 delta_norm = torch.linalg.vector_norm(x-x_prev).item()
-                if delta_norm < .001:
+                if delta_norm < args.update_tolerance:
                     break
             
             if loss == 0: break
@@ -236,8 +264,11 @@ def addDocs(args, args_valid=None, ax_params=None):
         # add to classifier_layer and embeddings
         classifier_layer[added_counter] = x
         if args.multiple_queries:
-            idx2add = torch.argmax(torch.matmul(qs, x.unsqueeze(dim=1)))
-            queries[added_counter] = qs[idx2add]
+            if args.min_old_q:
+                idx2add = torch.argmax(torch.matmul(qs, x.unsqueeze(dim=1)))
+                queries[added_counter] = qs[idx2add]
+            else:
+                queries[added_counter] = qs.mean(dim=0)
         else:
             queries[added_counter] = q
         classifier_layer = classifier_layer.detach()
@@ -248,70 +279,76 @@ def addDocs(args, args_valid=None, ax_params=None):
     if ax_params is not None:
         joblib.dump(classifier_layer, os.path.join(args.write_path_dir, 'temp.pkl'))
         model, tokenizer = initialize_model(args.model_path, classifier_layer)
-        hit_at_1, hit_at_5, hit_at_10, mrr_at_10 = validate_script(args_valid, tokenizer, model, doc_type='tune', split='valid')
+        hit_at_1, hit_at_5, hit_at_10, mrr_at_10 = validate_script(args_valid, tokenizer, model, doc_type='new' if args.tune_on_new else 'tune', split='valid')
+        print('Accuracy on new valid queries')
+        print(hit_at_1, hit_at_5, hit_at_10, mrr_at_10)
         if args.bayesian_target == 'new_val':
             print(ax_params)
             print(f'New hits@1: {hit_at_1}')
             return hit_at_1.item()
         
-        old_hit_at_1, hit_at_5, hit_at_10, mrr_at_10 = validate_script(args_valid, tokenizer, model, doc_type='old', split='valid')
+        old_hit_at_1, old_hit_at_5, old_hit_at_10, old_mrr_at_10 = validate_script(args_valid, tokenizer, model, doc_type='old', split='valid')
+        print('Accuracy on old valid queries')
+        print(old_hit_at_1, old_hit_at_5, old_hit_at_10, old_mrr_at_10)
         
         beta = args.harmonic_beta
-        harmonic_mean = (1+beta**2)*(hit_at_1*old_hit_at_1)/((beta**2)*hit_at_1 + old_hit_at_1)
+        harmonic_mean = (1+beta**2)*(mrr_at_10*old_mrr_at_10)/((beta**2)*mrr_at_10 + old_mrr_at_10)
         print(ax_params)
-        print(f'Old hits@1: {old_hit_at_1}')
-        print(f'New hits@1: {hit_at_1}')
-        print(f'harmonic_mean hits@1: {harmonic_mean}')
+        print(f'Old MRR@10: {old_mrr_at_10}')
+        print(f'New MRR@10: {mrr_at_10}')
+        print(f'harmonic_mean MRR@10: {harmonic_mean}')
         assert args.bayesian_target == 'harmonic_mean'
         
         return harmonic_mean.item()
         
     return failed_docs, classifier_layer, queries, np.asarray(timelist).mean(), timelist
 
-def validate_on_splits(val_dir, model_path, write_path_dir=None):
+def validate_on_splits(val_dir, model_path, data_dir, write_path_dir=None):
+    eval_doc_type = 'new'
     classifier_layer_path = os.path.join(val_dir, 'classifier_layer.pkl')
-    args_valid = get_validation_arguments(model_path, classifier_layer_path)
+    args_valid = get_validation_arguments(model_path, classifier_layer_path, data_dir)
     classifier_layer = joblib.load(classifier_layer_path)
     model, tokenizer = initialize_model(model_path, classifier_layer)
-    hit_at_1, hit_at_5, hit_at_10, mrr_at_10 = validate_script(args_valid, tokenizer, model, doc_type='new', split='unseenq')
+    hit_at_1, hit_at_5, hit_at_10, mrr_at_10 = validate_script(args_valid, tokenizer, model, doc_type=eval_doc_type, split='unseenq')
     print('Accuracy on new generated queries')
     print(hit_at_1, hit_at_5, hit_at_10, mrr_at_10)
 
     if write_path_dir is not None:
         with open(os.path.join(write_path_dir, 'log.txt'), 'a') as f:
             f.write('\n')
-            f.write('Accuracy on new generated queries: \n')
+            f.write(f'Accuracy on {eval_doc_type} generated queries: \n')
             f.write(f'hit_at_1: {hit_at_1}\n')
             f.write(f'hit_at_5: {hit_at_5}\n')
             f.write(f'hit_at_10: {hit_at_10}\n')
             f.write(f'mrr_at_10: {mrr_at_10}\n')
 
 
-    hit_at_1, hit_at_5, hit_at_10, mrr_at_10 = validate_script(args_valid, tokenizer, model, doc_type='old', split='valid')
-    print('Accuracy on old valid queries')
-    print(hit_at_1, hit_at_5, hit_at_10, mrr_at_10)
+    for split in ['valid', 'test']:
+        hit_at_1, hit_at_5, hit_at_10, mrr_at_10 = validate_script(args_valid, tokenizer, model, doc_type='old', split=split)
+        print(f'Accuracy on old {split} queries')
+        print(hit_at_1, hit_at_5, hit_at_10, mrr_at_10)
 
-    if write_path_dir is not None:
-        with open(os.path.join(write_path_dir, 'log.txt'), 'a') as f:
-            f.write('\n')
-            f.write('Accuracy on old valid queries: \n')
-            f.write(f'hit_at_1: {hit_at_1}\n')
-            f.write(f'hit_at_5: {hit_at_5}\n')
-            f.write(f'hit_at_10: {hit_at_10}\n')
-            f.write(f'mrr_at_10: {mrr_at_10}\n')
+        if write_path_dir is not None:
+            with open(os.path.join(write_path_dir, 'log.txt'), 'a') as f:
+                f.write('\n')
+                f.write(f'Accuracy on old {split} queries: \n')
+                f.write(f'hit_at_1: {hit_at_1}\n')
+                f.write(f'hit_at_5: {hit_at_5}\n')
+                f.write(f'hit_at_10: {hit_at_10}\n')
+                f.write(f'mrr_at_10: {mrr_at_10}\n')
 
-    hit_at_1, hit_at_5, hit_at_10, mrr_at_10 = validate_script(args_valid, tokenizer, model, doc_type='new', split='valid')
-    print('Accuracy on new valid queries')
-    print(hit_at_1, hit_at_5, hit_at_10, mrr_at_10)
+        hit_at_1, hit_at_5, hit_at_10, mrr_at_10 = validate_script(args_valid, tokenizer, model, doc_type=eval_doc_type, split=split)
+        print(f'Accuracy on {eval_doc_type} {split} queries')
+        print(hit_at_1, hit_at_5, hit_at_10, mrr_at_10)
 
-    if write_path_dir is not None:
-        with open(os.path.join(write_path_dir, 'log.txt'), 'a') as f:
-            f.write('\n')
-            f.write('Accuracy on new valid queries: \n')
-            f.write(f'hit_at_1: {hit_at_1}\n')
-            f.write(f'hit_at_5: {hit_at_5}\n')
-            f.write(f'hit_at_10: {hit_at_10}\n')
-            f.write(f'mrr_at_10: {mrr_at_10}\n')
+        if write_path_dir is not None:
+            with open(os.path.join(write_path_dir, 'log.txt'), 'a') as f:
+                f.write('\n')
+                f.write(f'Accuracy on {eval_doc_type} {split} queries: \n')
+                f.write(f'hit_at_1: {hit_at_1}\n')
+                f.write(f'hit_at_5: {hit_at_5}\n')
+                f.write(f'hit_at_10: {hit_at_10}\n')
+                f.write(f'mrr_at_10: {mrr_at_10}\n')
 
 def get_arguments():
     parser = argparse.ArgumentParser()
@@ -324,7 +361,7 @@ def get_arguments():
     parser.add_argument(
         "--dataset", 
         default='nq320k', 
-        choices=['nq320k'], 
+        choices=['nq320k', 'msmarco'], 
         help='which dataset to use')
     parser.add_argument(
         "--optimizer", 
@@ -338,6 +375,8 @@ def get_arguments():
         choices=['new_val', 'harmonic_mean'], 
         help='Target metric for hyperparameter tuning')
     parser.add_argument("--harmonic_beta", default=1, type=int, help="beta for harmonic mean")
+    parser.add_argument("--lbfgs_tolerance", default=1e-3, type=float, help="tolerance for lbfgs",)
+    parser.add_argument("--update_tolerance", default=1e-3, type=float, help="tolerance for the norm of the update",)
     parser.add_argument("--num_new_docs", default=None, type=int, help="number of new documents to add")
     parser.add_argument("--lbfgs_iterations", default=1000, type=int, help="number of iterations for lbfgs")
     parser.add_argument("--trials", default=30, type=int, help="number of trials to run for hyperparameter tuning")
@@ -352,6 +391,7 @@ def get_arguments():
     parser.add_argument("--noise_scale", default="0.001", type=float, help="how much noise to add to the query embeddings")
     parser.add_argument("--symmetric_loss", action="store_true", help="loss from the two terms are symmetric")
     parser.add_argument("--min_old_q", action="store_true", help="uses the old query with the tightest constraint")
+    parser.add_argument("--mean_new_q", action="store_true", help="uses the old query with the tightest constraint")
     parser.add_argument("--DSIplus", action="store_true", help="whether or not in the dsi++ setting")
 
     parser.add_argument(
@@ -359,6 +399,11 @@ def get_arguments():
         default='random', 
         choices=['random', 'mean', 'max'], 
         help='way to initialize the classifier vector')
+    parser.add_argument(
+        "--data_dir", 
+        default=None, 
+        type=str, 
+        help="path to data directory")
     parser.add_argument(
         "--embeddings_path", 
         default=None, 
@@ -393,9 +438,12 @@ def get_arguments():
     
     args = parser.parse_args()
 
+    datetime_str = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    args.write_path_dir = f'{args.write_path_dir}/{datetime_str}' if args.write_path_dir is not None else f'none/{datetime_str}'
+
     return args
 
-def get_validation_arguments(model_path, optimized_embeddings_path):
+def get_validation_arguments(model_path, optimized_embeddings_path, base_data_dir):
     parser = argparse.ArgumentParser()
 
     parser.add_argument(
@@ -501,7 +549,8 @@ def get_validation_arguments(model_path, optimized_embeddings_path):
     '--output_dir', '/home/vk352/dsi/outputs/dpr5_finetune_0.001_filtered_fixed_new/', '--model_name', 'bert-base-uncased', 
     '--batch_size', '1600', 
     '--initialize_model', model_path,
-    '--optimized_embeddings', optimized_embeddings_path])
+    '--optimized_embeddings', optimized_embeddings_path,
+    '--base_data_dir', base_data_dir,])
 
     return args
 
@@ -511,16 +560,72 @@ def exists(x):
 def set_file_paths(args):
     nq320k_filepaths = {'embeddings_path':'/home/jl3353/dsi/NQ320k_outputs/finetune_old_epoch17/',
                                 'model_path':'/home/vk352/dsi/NQ320k_outputs/old_docs/finetune_old_epoch17',
+                                'data_dir':'/home/vk352/dsi/data/NQ320k'
+                                }
+    msmarco_filepaths = {'embeddings_path':'/home/jl3353/dsi/msmarco_outputs/MSMARCO_2_bs1600lr5e-4/finetune_old_epoch10',
+                                'model_path':'/home/cw862/DSI/dsi/outputs/MSMARCO_2_bs1600lr5e-4/finetune_old_epoch10',
+                                'data_dir':'/home/cw862/MSMARCO/'
                                 }
    
-    filepath_defaults = {'nq320k':nq320k_filepaths}
+    filepath_defaults = {'nq320k':nq320k_filepaths, 'msmarco':msmarco_filepaths}
 
     arg_dict = vars(args)
     for k,v in filepath_defaults[args.dataset].items():
         arg_v = arg_dict[k]
-        # assert exists(v) or exists(arg_v), f'Need to define an argument or a default for {args.dataset}:{k}'
+        assert exists(v) or exists(arg_v), f'Need to define an argument or a default for {args.dataset}:{k}'
         if not exists(arg_v):
             arg_dict[k] = v
+
+
+def save_bayesian_opt_plots(args, model, experiment):
+    plot = plot_contour(model=model, param_x='m1', param_y='m2', metric_name='val_acc')
+        
+    data = plot[0]['data']
+    lay = plot[0]['layout']
+
+    fig = {
+        "data": data,
+        "layout": lay,
+    }
+    go.Figure(fig).write_image(os.path.join(args.write_path_dir, "margin_tradeoff.png"), format="png")
+
+    plot = plot_slice(model, "l2_reg", "val_acc")
+        
+    data = plot[0]['data']
+    lay = plot[0]['layout']
+
+    fig = {
+        "data": data,
+        "layout": lay,
+    }
+    go.Figure(fig).write_image(os.path.join(args.write_path_dir, "l2_reg.png"), format="png")
+
+    plot = plot_slice(model, "lambda", "val_acc")
+        
+    data = plot[0]['data']
+    lay = plot[0]['layout']
+
+    fig = {
+        "data": data,
+        "layout": lay,
+    }
+    go.Figure(fig).write_image(os.path.join(args.write_path_dir, "lambda.png"), format="png")
+
+    best_objectives = np.array([[trial.objective_mean for trial in experiment.trials.values()]])
+    plot = optimization_trace_single_method(
+        y=np.maximum.accumulate(best_objectives, axis=1),
+        title="Model performance vs. # of iterations",
+        ylabel="val_acc",
+    )
+
+    data = plot[0]['data']
+    lay = plot[0]['layout']
+
+    fig = {
+        "data": data,
+        "layout": lay,
+    }
+    go.Figure(fig).write_image(os.path.join(args.write_path_dir, "best_objective_plot.png"), format="png", width=1000, height=1000, scale=1)
 
 
 
@@ -528,15 +633,19 @@ def main():
     set_seed()
     args = get_arguments()
     set_file_paths(args)
+    os.makedirs(args.write_path_dir, exist_ok=True)
+    with open(os.path.join(args.write_path_dir, 'args.json'), 'w') as f:
+        json.dump(args.__dict__, f, indent=2)
+
 
     if args.val:
-        validate_on_splits(args.val_path, args.model_path, args.val_path)
+        validate_on_splits(args.val_path, args.model_path, args.data_dir, args.val_path)
         return 
 
     if args.tune_parameters:
         print("Tuning parameters")
         os.makedirs(args.write_path_dir, exist_ok=True)
-        args_valid = get_validation_arguments(args.model_path, os.path.join(args.write_path_dir, 'temp.pkl'))
+        args_valid = get_validation_arguments(args.model_path, os.path.join(args.write_path_dir, 'temp.pkl'), args.data_dir)
 
         if args.add_noise:
             best_parameters, values, experiment, model = optimize(
@@ -599,11 +708,13 @@ def main():
             parameters += [
                 {"name": "lambda", "value_type": "float", "type": "range", "bounds": [.001, .999], "log_scale": False},
                 {"name": "m1", "value_type": "float", "type": "range", "bounds": [0.0, 5.0], "log_scale": False},
-                {"name": "m2", "value_type": "float", "type": "range", "bounds": [0.0, 5.0], "log_scale": False},
-                {"name": "l2_reg", "value_type": "float", "type": "range", "bounds": [1e-8, 1e-1], "log_scale": True},
+                {"name": "m2", "value_type": "float", "type": "range", "bounds": [0.0, 15.0], "log_scale": False},
+                {"name": "l2_reg", "value_type": "float", "type": "range", "bounds": [1e-10, 1e-3], "log_scale": True},
                 {"name": "noise_scale", "type": "fixed", "value": 0.0, "log_scale": False }
             ]
-        
+            with open(os.path.join(args.write_path_dir, 'tuning_config.json'), 'w') as f:
+                json.dump(parameters, f, indent=2)
+
             best_parameters, values, experiment, model = optimize(
             parameters=parameters,
             evaluation_function=partial(addDocs, args, args_valid),
@@ -611,6 +722,8 @@ def main():
             total_trials=args.trials,
             minimize=False,
             )
+
+        save_bayesian_opt_plots(args, model, experiment)
 
         print(exp_to_df(experiment)) 
         print(f'best_parameters')
@@ -665,7 +778,7 @@ def main():
             f.write(f'Num failed docs: {len(failed_docs)}\n')
             f.write(f'Final time: {np.asarray(timelist).sum()}\n')
 
-        validate_on_splits(args.write_path_dir, args.model_path, args.write_path_dir)
+        validate_on_splits(args.write_path_dir, args.model_path, args.data_dir, args.write_path_dir)
 
 
 if __name__ == "__main__":
