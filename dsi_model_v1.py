@@ -236,6 +236,13 @@ def get_arguments():
         action="store_true",
         help="randomly sample equal number of old docs",
     )
+
+    parser.add_argument(
+        "--filter_num",
+        type=int,
+        default=-1,
+        help="num new docs",
+    )
     
 
     args = parser.parse_args()
@@ -532,6 +539,7 @@ def main():
         generated_queries_new = load_dataset_helper(os.path.join(args.base_data_dir_new, 'passages_seen.json'))
         val_data_new = load_dataset_helper(os.path.join(args.base_data_dir_new, 'valqueries.json'))
 
+
         logger.info('new train, generated, val set loaded')
 
         if args.doc_index:
@@ -547,7 +555,19 @@ def main():
     class_num = len(old_docs_list)
     if args.base_data_dir_new or args.test_only:
         new_docs_list = joblib.load(os.path.join(args.base_data_dir_new, 'doc_list.pkl'))
-        class_num += len(new_docs_list)
+
+        if args.filter_num!=-1:
+            filter_docs = new_docs_list[:args.filter_num]
+            train_data_new = train_data_new.filter(lambda example: example['doc_id'] in filter_docs)
+            generated_queries_new = generated_queries_new.filter(lambda example: example['doc_id'] in filter_docs)
+            val_data_new = val_data_new.filter(lambda example: example['doc_id'] in filter_docs)
+            if args.doc_index:
+                doc_data_new = doc_data_new.filter(lambda example: example['doc_id'] in filter_docs)
+            if args.test_only:
+                test_data_new = test_data_new.filter(lambda example: example['doc_id'] in filter_docs)
+            class_num += args.filter_num
+        else:
+            class_num += len(new_docs_list)
 
     logger.info(f'Class number {class_num}')
 
