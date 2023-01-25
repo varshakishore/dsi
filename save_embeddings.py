@@ -236,14 +236,14 @@ def main():
         else:
             
             file_path = os.path.join(data_dirs[args.doc_split], f'{args.split}queries.json')
-            queries = datasets.load_dataset(
+            natural_queries = datasets.load_dataset(
             'json',
             data_files=file_path,
             ignore_verifications=False,
             cache_dir='cache'
             )['train']
 
-    queries = dataset_cls(tokenizer=tokenizer, datadict = queries)
+            queries = dataset_cls(tokenizer=tokenizer, datadict = natural_queries)
 
     dataloader = DataLoader(queries, 
                             batch_size=3500,
