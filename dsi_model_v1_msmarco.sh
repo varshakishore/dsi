@@ -17,7 +17,7 @@ python  dsi_model_v1.py \
 --learning_rate=$learning_rate  --train_epochs=$train_epochs \
 --initialize_model=$model_path --model_name='bert-base-uncased' \
 --wandb_name=$wandb_name --output_name=$wandb_name --base_data_dir_new=$base_data_dir_new \
---base_data_dir=$data_dir --filter_num=100"
+--base_data_dir=$data_dir --filter_num=100 --freeze_base_model"
 
 # --freeze_base_model --initialize_model $model_path 
 
