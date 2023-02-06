@@ -78,6 +78,21 @@ def get_arguments():
         help='folder to write the results'
     )
 
+    parser.add_argument(
+        "--doc_type",
+        default=None,
+        type=str,
+        choices=['old_docs','new_docs','tune_docs'],
+        help='which doc split to use'
+    )
+
+    parser.add_argument(
+        "--data_path",
+        default=None,
+        type=str,
+        help='path to dataset'
+    )
+
     args = parser.parse_args()
 
     return args

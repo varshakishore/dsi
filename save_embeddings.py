@@ -171,23 +171,29 @@ def main():
         doc2class = joblib.load('/home/vk352/dsi/data/NQ320k/old_docs/doc_class.pkl')
         dataset_cls = partial(dsi_model_v1.DSIqgTrainDataset, doc_class=doc2class)
         file_path = '/home/cw862/DPR_data_final/NQ320k_docs.json'
-        queries = datasets.load_dataset(
+        docs = datasets.load_dataset(
             'json',
             data_files=file_path,
             ignore_verifications=False,
             cache_dir='cache'
             )['train']
+
+        queries = dataset_cls(tokenizer=tokenizer, datadict = docs)
+        
     elif args.text_type == 'document' and args.dataset == 'msmarco':
-        doc2class = joblib.load('/home/cw862/MSMARCO/old_docs/')
+        doc2class = joblib.load('/home/cw862/MSMARCO/old_docs/doc_class.pkl')
         dataset_cls = partial(dsi_model_v1.DSIqgTrainDataset, doc_class=doc2class)
         # TODO
-        file_path = '/home/cw862/DPR_data_final/NQ320k_docs.json'
-        queries = datasets.load_dataset(
+        file_path = '/home/cw862/DPR_data_final/MSMARCO_new_docs.json'
+        docs = datasets.load_dataset(
             'json',
             data_files=file_path,
             ignore_verifications=False,
             cache_dir='cache'
             )['train']
+
+        queries = dataset_cls(tokenizer=tokenizer, datadict = docs)
+        
 
     elif args.dataset == 'nq320k' and args.text_type == 'query':
         data_dirs = {'data': '/home/vk352/dsi/data/NQ320k',
@@ -291,11 +297,11 @@ def main():
         print('Done.')
 
     elif args.text_type == 'document':
-        joblib.dump(embedding_matrix, os.path.join(args.output_dir, 'document_embedding.pkl'))
+        joblib.dump(embedding_matrix, os.path.join(args.output_dir, 'new_document_embedding.pkl'))
         class2doc = {v:k for k, v in doc2class.items()}
         assert len(class2doc) == len(doc2class)
         doc_ids = torch.tensor([class2doc[i.item()] for i in labels], dtype=torch.long)
-        joblib.dump(doc_ids, os.path.join(args.output_dir, f'document-docids.pkl'))
+        joblib.dump(doc_ids, os.path.join(args.output_dir, f'new_document-docids.pkl'))
 
 
 if __name__ == "__main__":
