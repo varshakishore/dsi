@@ -56,7 +56,17 @@ def get_arguments():
     parser.add_argument(
         "--embeddings_path",
         # default="/home/jl3353/dsi/NQ320k_outputs/finetune_old_epoch17",
-        default="/home/cw862/DSI/dsi/NQ320k_outputs/docs",
+        # nq path: /home/cw862/DSI/dsi/NQ320k_outputs/docs
+        default="/home/cw862/DSI/dsi/MSMARCO_outputs/docs",
+        type=str,
+        help="path to saved model",
+    )
+
+    parser.add_argument(
+        "--new_doc_list_path",
+        # default="/home/jl3353/dsi/NQ320k_outputs/finetune_old_epoch17",
+        # nq class list: "/home/vk352/dsi/data/NQ320k/new_docs/doc_list.pkl"
+        default="/home/cw862/MSMARCO/new_docs/doc_list.pkl",
         type=str,
         help="path to saved model",
     )
@@ -65,21 +75,36 @@ def get_arguments():
 
     return args
 
-def get_representations(embeddings_path):
+def get_representations(embeddings_path, doc_list_path=None, filter_num=-1):
     # Sentence embeddings and doc_ids
+
+    if doc_list_path:
+        doc_list = joblib.load(doc_list_path)
+        docs = doc_list[:filter_num]
+
     old_doc_embeddings = joblib.load(os.path.join(embeddings_path, 'old_docs_embedding.pkl'))
     new_doc_embeddings = joblib.load(os.path.join(embeddings_path, 'new_docs_embedding.pkl'))
-    train_embeddings = torch.cat((old_doc_embeddings, new_doc_embeddings), dim=0)
     
     old_doc_doc_ids = joblib.load(os.path.join(embeddings_path, 'old_docs-docids.pkl'))
     new_doc_doc_ids = joblib.load(os.path.join(embeddings_path, 'new_docs-docids.pkl'))
-    train_doc_ids = torch.cat((old_doc_doc_ids, new_doc_doc_ids), dim=0)
-
+    
     old_val_q_embeddings = joblib.load(os.path.join(embeddings_path, 'old-val-embeddings.pkl'))
     new_val_q_embeddings = joblib.load(os.path.join(embeddings_path, 'new-val-embeddings.pkl'))
 
     old_val_q_doc_ids = joblib.load(os.path.join(embeddings_path, 'old-val-docids.pkl'))
     new_val_q_doc_ids = joblib.load(os.path.join(embeddings_path, 'new-val-docids.pkl'))
+
+    if doc_list_path:
+        indices = [i for i, docid in enumerate(new_doc_doc_ids) if docid.item() in docs]
+        new_doc_embeddings = new_doc_embeddings[indices]
+        new_doc_doc_ids = new_doc_doc_ids[indices]
+
+        indices = [i for i, docid in enumerate(new_val_q_doc_ids) if docid.item() in docs]
+        new_val_q_embeddings = new_val_q_embeddings[indices]
+        new_val_q_doc_ids = new_val_q_doc_ids[indices]
+
+    train_embeddings = torch.cat((old_doc_embeddings, new_doc_embeddings), dim=0)
+    train_doc_ids = torch.cat((old_doc_doc_ids, new_doc_doc_ids), dim=0)
 
     return train_embeddings, train_doc_ids, old_val_q_embeddings, old_val_q_doc_ids, new_val_q_embeddings, new_val_q_doc_ids
 
@@ -117,7 +142,7 @@ def validate(closest_docs, test_doc_ids, train_doc_ids):
         for i, doc_id in enumerate(doc_ids):
             hits.append(test_doc_ids[query_idx] == doc_id)
         scores.append(hits)
-
+    
     n_docs = len(closest_docs[0])
     top_k_hits = [0] * n_docs
     for question_hits in scores:
@@ -150,8 +175,7 @@ def main():
 
     args = get_arguments()
 
-    
-    train_embeddings, train_doc_ids, old_test_embeddings, old_test_doc_ids, new_test_embeddings, new_test_doc_ids = get_representations(args.embeddings_path)
+    train_embeddings, train_doc_ids, old_test_embeddings, old_test_doc_ids, new_test_embeddings, new_test_doc_ids = get_representations(args.embeddings_path, args.new_doc_list_path, 10)
 
     dim = train_embeddings.shape[1]
 
