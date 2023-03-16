@@ -134,6 +134,10 @@ outputs/*/
 cache/
 data/
 wandb/
+msmarco_baselines/
+msmarco_output/
+NQ320k_baselines/
+NQ320k_outputs/
 
 *.png
 

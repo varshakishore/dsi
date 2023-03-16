@@ -243,6 +243,12 @@ def get_arguments():
         default=-1,
         help="num new docs",
     )
+
+    parser.add_argument(
+        "--new_only",
+        action="store_true",
+        help="train with new queries only",
+    )
     
 
     args = parser.parse_args()
@@ -562,6 +568,9 @@ def main():
 
     old_docs_list = joblib.load(os.path.join(args.base_data_dir, 'old_docs', 'doc_list.pkl'))
     class_num = len(old_docs_list)
+    if args.new_only:
+        doc_class = joblib.load(os.path.join(args.base_data_dir, 'old_docs', 'doc_class.pkl'))
+        class_num = len(doc_class)
     if args.base_data_dir_new or args.test_only:
         new_docs_list = joblib.load(os.path.join(args.base_data_dir_new, 'doc_list.pkl'))
 
@@ -635,7 +644,10 @@ def main():
         DSIQG_val_new = DSIqgTrainDataset(tokenizer=tokenizer, datadict = val_data_new, doc_class=doc_class)
         gen_queries_new = GenPassageDataset(tokenizer=tokenizer, datadict = generated_queries_new, doc_class=doc_class)
 
-        Train_DSIQG = ConcatDataset([Train_DSIQG, DSIQG_train_new, gen_queries_new])
+        if args.new_only:
+            Train_DSIQG = ConcatDataset([DSIQG_train_new, gen_queries_new])
+        else:
+            Train_DSIQG = ConcatDataset([Train_DSIQG, DSIQG_train_new, gen_queries_new])
         if args.doc_index:
             DSIQG_doc_new = DSIqgDocDataset(tokenizer=tokenizer, datadict = doc_data_new, doc_class=doc_class)
             Train_DSIQG = ConcatDataset([Train_DSIQG, DSIQG_doc_new])
@@ -650,7 +662,10 @@ def main():
 
     length = len(train_data) + len(generated_queries)
     if args.base_data_dir_new or args.test_only:
-        length += len(train_data_new) + len(generated_queries_new)
+        if args.new_only:
+            length = len(train_data_new) + len(generated_queries_new)
+        else:
+            length += len(train_data_new) + len(generated_queries_new)
     if args.doc_index:
         length += len(doc_data)
 
