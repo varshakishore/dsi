@@ -1,7 +1,7 @@
 import datasets
 from torch.utils.data import Dataset
 from transformers import PreTrainedTokenizer, DataCollatorWithPadding
-from transformers import T5Tokenizer, BertTokenizer
+from transformers import T5Tokenizer, BertTokenizer, T5ForConditionalGeneration
 import numpy as np
 import torch
 import wandb
@@ -46,8 +46,8 @@ class DSIqgTrainDataset(Dataset):
                                    return_tensors="pt",
                                    truncation="only_first",
                                   max_length=32).input_ids[0]
-        
-        return input_ids, self.doc_class[data['doc_id']]
+        import pdb;pdb.set_trace()
+        return input_ids, list(map(int, self.doc_class[data['doc_id']])) # changed, added int()
 
 class DSIqgDocDataset(Dataset):
     def __init__(
@@ -125,7 +125,7 @@ def get_arguments():
     parser.add_argument(
         "--model_name",
         default='T5-base',
-        choices=['T5-base', 'bert-base-uncased'],
+        choices=['T5-base', 'bert-base-uncased', 'T5-large'],
         help="Model name",
     )
 
@@ -280,11 +280,18 @@ def train(args, model, train_dataloader, optimizer, length):
 
         if args.model_name == 'T5-base':
             logits = model(input_ids=inputs['input_ids'].long(), decoder_input_ids=decoder_input_ids.long()).squeeze()
+            _, docids = torch.max(logits, 1)
+            loss = loss_func(logits,torch.tensor(inputs['labels']).long())
         elif args.model_name == 'bert-base-uncased':
             logits = model(inputs['input_ids'], inputs['attention_mask'])
-        _, docids = torch.max(logits, 1)
+            _, docids = torch.max(logits, 1)
+            loss = loss_func(logits,torch.tensor(inputs['labels']).long())
+        elif args.model_name == 'T5-large':
+            print("we got to 3")
+            loss = model(input_ids=inputs['input_ids'], attention_mask=inputs['attention_mask'], labels=inputs['labels']).loss
+            docids = model.generate(inputs['input_ids'], max_length=20, prefix_allowed_tokens_fn=restrict_decode_vocab, early_stopping=True) # greedy search until 20 tokens
+            # TODO: turn into partial beam search tree, see page 5-6 of paper
         
-        loss = loss_func(logits,torch.tensor(inputs['labels']).long())
 
         correct_cnt = (docids == inputs['labels']).sum()
         
@@ -335,15 +342,24 @@ def validate(args, model, val_dataloader):
 
             if args.model_name == 'T5-base':
                 logits = model(input_ids=inputs['input_ids'].long(), decoder_input_ids=decoder_input_ids.long()).squeeze()
+                loss = loss_func(logits,torch.tensor(inputs['labels']).long())
+                _, docids = torch.max(logits, 1)
             elif args.model_name == 'bert-base-uncased':
                 logits = model(inputs['input_ids'], inputs['attention_mask'])
-            
-            loss = loss_func(logits,torch.tensor(inputs['labels']).long())
+                loss = loss_func(logits,torch.tensor(inputs['labels']).long())
+                _, docids = torch.max(logits, 1)
+            elif args.model_name == 'T5-large':
+                print("we got to eval")
+                # import pdb;pdb.set_trace()
+                loss = model(input_ids=inputs['input_ids'], attention_mask=inputs['attention_mask'], labels=inputs['labels']).loss
+                docids = model.generate(inputs['input_ids'], max_length=20, prefix_allowed_tokens_fn=restrict_decode_vocab, early_stopping=True) # greedy search until 20 tokens
+                print("we got past eval docids")
+                # TODO: turn into partial beam search tree, see page 5-6 of paper
+
+           
 
             val_loss += loss.item()
             
-            _, docids = torch.max(logits, 1)
-
             hit_at_1 += (docids == inputs['labels']).sum()
 
 
@@ -588,12 +604,19 @@ def main():
     elif args.model_name == 'bert-base-uncased':
         model = QueryClassifier(class_num)
         tokenizer = BertTokenizer.from_pretrained('bert-base-uncased',cache_dir='cache')
+    elif args.model_name == 'T5-large':
+        # print("we got to 1")
+        # import pdb;pdb.set_trace()
+        model = T5ForConditionalGeneration.from_pretrained('t5-base', cache_dir='cache')
+        # print("we got to 1.1")
+        tokenizer = T5Tokenizer.from_pretrained('t5-base',cache_dir='cache')
+        # print("we got past 1")
 
     # load saved model if initialize_model
     # TODO extend for T5
     if args.initialize_model:
         load_saved_weights(model, args.initialize_model, strict_set=False)
-
+    print("finished loading saved model")
 
     ### Use pre_calculated weights to initialize the projection matrix
     if args.initialize_embeddings:
@@ -717,6 +740,22 @@ def main():
                                     drop_last=False)
 
     # global_step = 0
+    
+    # docid generation constrain, we only generate integer docids.
+    SPIECE_UNDERLINE = "▁"
+    INT_TOKEN_IDS = []
+    for token, id in tokenizer.get_vocab().items():
+        if token[0] == SPIECE_UNDERLINE:
+            if token[1:].isdigit():
+                INT_TOKEN_IDS.append(id)
+        if token == SPIECE_UNDERLINE:
+            INT_TOKEN_IDS.append(id)
+        elif token.isdigit():
+            INT_TOKEN_IDS.append(id)
+    INT_TOKEN_IDS.append(tokenizer.eos_token_id)
+
+    def restrict_decode_vocab(batch_idx, prefix_beam):
+        return INT_TOKEN_IDS
 
     # global_step=0
     if args.test_only:
@@ -753,7 +792,7 @@ def main():
 
     if args.test_only:
         return
-
+    print("we got to 1.5")
     if not args.validate_only:
         if args.wandb_name:
             wandb.log({'Hits@1': hit_at_1/val_length, 'Hits@5': hit_at_5/val_length, \
@@ -768,6 +807,7 @@ def main():
             if args.get_subsampled_train_dataloader:
                 train_dataloader = get_subsampled_train_dataloader(old_docs_list, new_docs_list, train_data, train_data_new, 
                     generated_queries, generated_queries_new, tokenizer, doc_class, args.batch_size)
+            print("we got to 2")
             train(args, model, train_dataloader, optimizer, length)
 
             # logger.info(f'Train Accuracy: {correct_ratio_train}')
