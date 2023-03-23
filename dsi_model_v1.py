@@ -47,7 +47,7 @@ class DSIqgTrainDataset(Dataset):
                                    truncation="only_first",
                                   max_length=32).input_ids[0]
         import pdb;pdb.set_trace()
-        return input_ids, list(map(int, self.doc_class[data['doc_id']])) # changed, added int()
+        return input_ids, self.doc_class[data['doc_id']] # changed, added int()
 
 class DSIqgDocDataset(Dataset):
     def __init__(
