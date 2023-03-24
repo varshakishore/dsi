@@ -46,8 +46,15 @@ class DSIqgTrainDataset(Dataset):
                                    return_tensors="pt",
                                    truncation="only_first",
                                   max_length=32).input_ids[0]
-        import pdb;pdb.set_trace()
-        return input_ids, self.doc_class[data['doc_id']] # changed, added int()
+        
+        # to turn 61062 into ['6','1','0','6','2'] then encode it
+        doc_ids = self.tokenizer(str(self.doc_class[data['doc_id']]),
+                                   return_tensors="pt",
+                                   truncation="only_first",
+                                  max_length=6, padding='max_length', 
+                                  is_split_into_words=True).input_ids[0]
+        # import pdb;pdb.set_trace()
+        return input_ids, doc_ids # changed, added str()
 
 class DSIqgDocDataset(Dataset):
     def __init__(
@@ -257,8 +264,11 @@ class IndexingCollator(DataCollatorWithPadding):
         input_ids = [{'input_ids': x[0]} for x in features]
         docids = [x[1] for x in features]
         inputs = super().__call__(input_ids)
-                
-        inputs['labels'] = torch.Tensor(docids).long()
+
+        # labels = super().__call__(docids)
+        # import pdb; pdb.set_trace()
+        inputs['labels'] = torch.stack(docids) # to turn list of tensors into tensor of lists
+        # inputs['labels'] = torch.Tensor(docids).long()
         return inputs
 
     
@@ -289,7 +299,7 @@ def train(args, model, train_dataloader, optimizer, length):
         elif args.model_name == 'T5-large':
             print("we got to 3")
             loss = model(input_ids=inputs['input_ids'], attention_mask=inputs['attention_mask'], labels=inputs['labels']).loss
-            docids = model.generate(inputs['input_ids'], max_length=20, prefix_allowed_tokens_fn=restrict_decode_vocab, early_stopping=True) # greedy search until 20 tokens
+            docids = model.module.generate(inputs['input_ids'], max_length=20, prefix_allowed_tokens_fn=restrict_decode_vocab, early_stopping=True) # greedy search until 20 tokens
             # TODO: turn into partial beam search tree, see page 5-6 of paper
         
 
@@ -317,7 +327,7 @@ def train(args, model, train_dataloader, optimizer, length):
     logger.info(f'Loss:{tr_loss/(i+1)}')
     return correct_ratio, tr_loss
 
-def validate(args, model, val_dataloader):
+def validate(args, model, val_dataloader, restrict_decode_vocab):
 
     model.eval()
 
@@ -352,7 +362,8 @@ def validate(args, model, val_dataloader):
                 print("we got to eval")
                 # import pdb;pdb.set_trace()
                 loss = model(input_ids=inputs['input_ids'], attention_mask=inputs['attention_mask'], labels=inputs['labels']).loss
-                docids = model.generate(inputs['input_ids'], max_length=20, prefix_allowed_tokens_fn=restrict_decode_vocab, early_stopping=True) # greedy search until 20 tokens
+                import pdb;pdb.set_trace()
+                docids = model.module.generate(inputs['input_ids'], max_length=20, prefix_allowed_tokens_fn=restrict_decode_vocab, early_stopping=True) # greedy search until 20 tokens
                 print("we got past eval docids")
                 # TODO: turn into partial beam search tree, see page 5-6 of paper
 
@@ -502,7 +513,7 @@ def load_dataset_helper(path):
 def get_subsampled_train_dataloader(old_docs_list, new_docs_list, train_data, train_data_new, generated_queries, generated_queries_new, tokenizer, doc_class, batch_size):
     random.shuffle(old_docs_list)
     filter_docs = old_docs_list[:len(new_docs_list)]
-    import pdb; pdb.set_trace()
+    # import pdb; pdb.set_trace()
     train_data_tp = train_data.filter(lambda example: example['doc_id'] in filter_docs)
     train_data_new_tp = train_data_new.filter(lambda example: example['doc_id'] in filter_docs)
     generated_queries_tp = generated_queries.filter(lambda example: example['doc_id'] in filter_docs)
@@ -760,20 +771,20 @@ def main():
     # global_step=0
     if args.test_only:
         logger.info('Testing')
-        hit_at_1, hit_at_5, hit_at_10, mrr_at_10 = validate(args, model, test_dataloader)
+        hit_at_1, hit_at_5, hit_at_10, mrr_at_10 = validate(args, model, test_dataloader, restrict_decode_vocab)
         logger.info(f'Test Accuracy: {hit_at_1} / {test_length} = {hit_at_1/test_length}')
         logger.info(f'Test Hits@5: {hit_at_5} / {test_length} = {hit_at_5/test_length}')
         logger.info(f'Test Hits@10: {hit_at_10} / {test_length} = {hit_at_10/test_length}')
         logger.info(f'MRR@10: {mrr_at_10} / {test_length} = {mrr_at_10/test_length}')
 
-        hit_at_1, hit_at_5, hit_at_10, mrr_at_10 = validate(args, model, test_dataloader_new)
+        hit_at_1, hit_at_5, hit_at_10, mrr_at_10 = validate(args, model, test_dataloader_new, restrict_decode_vocab)
         logger.info(f'Test Accuracy: {hit_at_1} / {test_length_new} = {hit_at_1/test_length_new}')
         logger.info(f'Test Hits@5: {hit_at_5} / {test_length_new} = {hit_at_5/test_length_new}')
         logger.info(f'Test Hits@10: {hit_at_10} / {test_length_new} = {hit_at_10/test_length_new}')
         logger.info(f'MRR@10: {mrr_at_10} / {test_length_new} = {mrr_at_10/test_length_new}')
 
     
-    hit_at_1, hit_at_5, hit_at_10, mrr_at_10 = validate(args, model, val_dataloader)
+    hit_at_1, hit_at_5, hit_at_10, mrr_at_10 = validate(args, model, val_dataloader, restrict_decode_vocab)
 
     logger.info(f'Validation accuracy:')
     logger.info(f'Evaluation Accuracy: {hit_at_1} / {val_length} = {hit_at_1/val_length}')
@@ -782,7 +793,7 @@ def main():
     logger.info(f'MRR@10: {mrr_at_10} / {val_length} = {mrr_at_10/val_length}')
 
     if args.base_data_dir_new or args.test_only:
-        hit_at_1, hit_at_5, hit_at_10, mrr_at_10 = validate(args, model, val_dataloader_new)
+        hit_at_1, hit_at_5, hit_at_10, mrr_at_10 = validate(args, model, val_dataloader_new, restrict_decode_vocab)
 
         logger.info(f'Evaluating on the new dataset')
         logger.info(f'Evaluation Accuracy: {hit_at_1} / {val_length_new} = {hit_at_1/val_length_new}')
@@ -814,7 +825,7 @@ def main():
             # logger.info(f'Train Loss: {tr_loss}')
 
             scheduler.step()
-            hit_at_1, hit_at_5, hit_at_10, mrr_at_10 = validate(args, model, val_dataloader)
+            hit_at_1, hit_at_5, hit_at_10, mrr_at_10 = validate(args, model, val_dataloader, restrict_decode_vocab)
 
             logger.info(f'Epoch: {i+1}')
             logger.info(f'Evaluation Accuracy: {hit_at_1} / {val_length} = {hit_at_1/val_length}')
@@ -827,7 +838,7 @@ def main():
                     'Hits@10': hit_at_10/val_length, 'MRR@10': mrr_at_10/val_length, "epoch": i+1})
 
             if args.base_data_dir_new:
-                hit_at_1, hit_at_5, hit_at_10, mrr_at_10 = validate(args, model, val_dataloader_new)
+                hit_at_1, hit_at_5, hit_at_10, mrr_at_10 = validate(args, model, val_dataloader_new, restrict_decode_vocab)
 
                 logger.info(f'Evaluating on the new dataset')
                 logger.info(f'Evaluation Accuracy: {hit_at_1} / {val_length_new} = {hit_at_1/val_length_new}')
