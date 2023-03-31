@@ -364,7 +364,7 @@ def validate(args, model, val_dataloader):
             
     return hit_at_1, hit_at_5, hit_at_10, mrr_at_10
 
-def validate_script(args, tokenizer, model, doc_type=None, split=None):
+def validate_script(args, tokenizer, model, doc_type=None, split=None, filter_doc_list=None, permutation_seed=None):
 
     device = torch.device("cuda")
 
@@ -375,7 +375,10 @@ def validate_script(args, tokenizer, model, doc_type=None, split=None):
         doc_class = joblib.load(os.path.join(data_dir, 'doc_class.pkl'))
     elif doc_type == "new":
         data_dir = os.path.join(args.base_data_dir, 'new_docs')
-        doc_class = joblib.load(os.path.join(data_dir, 'doc_class.pkl'))
+        if permutation_seed is None:
+            doc_class = joblib.load(os.path.join(data_dir, 'doc_class.pkl'))
+        else:
+            doc_class = joblib.load(os.path.join('/home/jl3353/dsi/data/NQ320k/new_docs', f'doc_class_seed{permutation_seed}.pkl'))
         if 'MSMARCO' in args.base_data_dir:
             doc_list = joblib.load(os.path.join(data_dir, 'doc_list.pkl'))
             doc_list = doc_list[:10000]
@@ -443,6 +446,10 @@ def validate_script(args, tokenizer, model, doc_type=None, split=None):
     
     if 'MSMARCO' in args.base_data_dir and doc_type in {'new', 'tune'}:
         data = data.filter(lambda example: example['doc_id'] in doc_list)
+    if filter_doc_list is not None:
+        data = data.filter(lambda example: example['doc_id'] in filter_doc_list)
+        if len(data) == 0:
+            return None, None, None, None
 
     if split == "train" or split == "valid" or split == 'test':
         dataset =  DSIqgTrainDataset(tokenizer=tokenizer, datadict = data, doc_class = doc_class)

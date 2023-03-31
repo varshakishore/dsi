@@ -12,10 +12,10 @@ logger = logging.getLogger(__name__)
 import argparse
 import os
 import joblib
+import json
 from utils import *
-from dsi_model_continual import DSIqgTrainDataset, GenPassageDataset, IndexingCollator
 from direct_optimize import initialize_model, initialize_nq320k
-from dsi_model_v1 import validate
+from dsi_model_v1 import validate_script
 
 
 def get_arguments():
@@ -87,98 +87,22 @@ def get_arguments():
     )
 
     parser.add_argument(
-        "--data_path",
+        "--base_data_dir",
         default=None,
         type=str,
         help='path to dataset'
+    )
+
+    parser.add_argument(
+        "--frequent",
+        action='store_true',
+        help='run frequent evaluation'
     )
 
     args = parser.parse_args()
 
     return args
 
-def loaddataset(args, tokenizer):
-
-    seen_gen_qs = datasets.load_dataset(
-        'json',
-        data_files=os.path.join(args.data_path, args.doc_type, 'passages_seen.json'),
-        ignore_verifications=False,
-        cache_dir='cache'
-    )['train']   
-
-    unseen_gen_qs = datasets.load_dataset(
-        'json',
-        data_files=os.path.join(args.data_path, args.doc_type, 'passages_unseen.json'),
-        ignore_verifications=False,
-        cache_dir='cache'
-    )['train']
-
-    print(f'passages loaded with length {len(seen_gen_qs)}')
-    print(f'unseen passages loaded with length {len(unseen_gen_qs)}')
-
-    val_data = datasets.load_dataset(
-    'json',
-    data_files=os.path.join(args.data_path, args.doc_type, 'valqueries.json'),
-    ignore_verifications=False,
-    cache_dir='cache'
-    )['train']
-
-    print(f'validation set loaded with length {len(val_data)}')
-
-    test_data = datasets.load_dataset(
-    'json',
-    data_files=os.path.join(args.data_path, args.doc_type, 'testqueries.json'),
-    ignore_verifications=False,
-    cache_dir='cache'
-    )['train']
-
-    print(f'test set loaded with length {len(test_data)}')
-    
-    print('datasets loaded')
-
-    if args.doc_type == "new_docs" or args.doc_type == "old_docs":
-        doc_class = joblib.load(os.path.join(args.data_path, 'new_docs', 'doc_class.pkl'))
-    elif args.doc_type == "tune_docs":
-        doc_class = joblib.load(os.path.join(args.data_path, 'tune_docs', 'doc_class.pkl'))
-
-    val_dataset =  DSIqgTrainDataset(tokenizer=tokenizer, datadict = val_data, doc_class = doc_class)
-    test_dataset = DSIqgTrainDataset(tokenizer=tokenizer, datadict = val_data, doc_class = doc_class)
-
-    seenq_dataset = GenPassageDataset(tokenizer=tokenizer, datadict = seen_gen_qs, doc_class=doc_class)
-    unseenq_dataset = GenPassageDataset(tokenizer=tokenizer, datadict = unseen_gen_qs, doc_class=doc_class)
-
-    return [val_dataset, test_dataset, seenq_dataset, unseenq_dataset]
-    
-def filter_Dataloader(args, old_class_num, class_num, datasets, tokenizer):
-
-    new_class_num = class_num - old_class_num
-    print(f'Old class number: {old_class_num}')
-    print(f'New class number: {new_class_num}')
-    print(f'Total class number:  {class_num}')
-
-    # use the data only till the class_num docs
-    print('Filtering datasets')
-
-    filtered_datasets = [dataset.filter(lambda example: example[1] < class_num) for dataset in datasets]
-
-    new_datasets = [dataset.filter(lambda example: example[1] >= old_class_num) for dataset in filtered_datasets]
-
-    old_datasets = [dataset.filter(lambda example: example[1] < old_class_num) for dataset in filtered_datasets]
-
-    print(f"Filtered set:")
-    print('\n')
-    print(f"Old-Val-{len(old_datasets[0])}, New-Val-{len(new_datasets[0])}") 
-    print(f"Old-Test-{len(old_datasets[1])}, New-Test-{len(new_datasets[1])}") 
-    print(f"seen queries from old docs{len(old_datasets[2])}, seen queries from new docs{len(new_datasets[2])}") 
-    print(f"unseen queries from old docs{len(old_datasets[3])}, unseen queries from new docs{len(new_datasets[3])}") 
-
-    old_dataloaders = [DataLoader(old_data, batch_size=args.batch_size,collate_fn=IndexingCollator(tokenizer,padding='longest'),shuffle=False,drop_last=False)
-                    for old_data in old_datasets]
-
-    new_dataloaders = [DataLoader(new_data, batch_size=args.batch_size,collate_fn=IndexingCollator(tokenizer,padding='longest'),shuffle=False,drop_last=False)
-                    for new_data in new_datasets]
-
-    return old_dataloaders, new_dataloaders
 
 def Getmodel(args, embedding_matrix, class_num):    
 
@@ -216,72 +140,103 @@ def main():
         old_class_num = 289424
     else:
         raise ValueError(f'dataset={args.dataset} must be NQ320k or MSMARCO')
-
-    datasets = loaddataset(args.data_path, args.doc_type)
-
+    
     embedding_matrix = joblib.load(os.path.join(args.initialize_embeddings, 'classifier_layer.pkl'))
+
+    if args.frequent:
+        with open(os.path.join(args.initialize_embeddings, 'args.json'), 'rt') as f:
+            saved_args = json.load(f)
+            if 'permutation_seed' in saved_args:
+                permutation_seed = saved_args['permutation_seed']
+            else:
+                permutation_seed = None
+            print(permutation_seed)
+        eval_doc_nums = [10, 50, 100, 250, 500, 1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000, 10000]
+        results = {'Num_Documents':[], 'Doc_type':[], 'Split':[], 'H@1':[], 'H@5':[], 'H@10':[], 'MRR@10':[]}
+        for num_eval_doc in eval_doc_nums:
+            class_num = old_class_num + num_eval_doc
+
+            model = Getmodel(args, embedding_matrix, class_num)
+
+            doc_types = ['old','new']
+            if num_eval_doc < 1000:
+                split = 'valid'
+            else:
+                split = 'test'
+            
+            for doc_type in doc_types:
+                if doc_type == 'new':
+                    if permutation_seed is not None:
+                        filter_docs_list = joblib.load(os.path.join('/home/jl3353/dsi/data/NQ320k/new_docs', f'doc_list_seed{permutation_seed}.pkl'))
+                    else:
+                        filter_docs_list = joblib.load(os.path.join(args.base_data_dir, f'{doc_type}_docs', 'doc_list.pkl'))
+                    filter_docs_list = filter_docs_list[:num_eval_doc]
+                    h1, h5, h10, mrr_10 = validate_script(args, tokenizer, model, doc_type, split, filter_docs_list, permutation_seed)
+                else:
+                    h1, h5, h10, mrr_10 = validate_script(args, tokenizer, model, doc_type, split)
+                results['Num_Documents'].append(num_eval_doc)
+                results['Split'].append(split)
+                results['Doc_type'].append(doc_type)
+                results['H@1'].append(h1.item())
+                results['H@5'].append(h5.item())
+                results['H@10'].append(h10.item())
+                results['MRR@10'].append(mrr_10.item())
+        results = pd.DataFrame(results)
+        results.to_csv(os.path.join(args.write_path, 'results.csv'), index=False)
+        return
+
+                
+            
+    
+    eval_doc_nums = [10, 100, 1000, 10000]
+
 
     print('query embeddings loaded')
 
 
-    h1 = []
-    h5 = []
-    h10 = []
-    m10 = []
-    progress = []
+    results_list = []
 
-    for class_num in range(old_class_num, embedding_matrix.shape[0], args.eval_step):
-
-        added_num = class_num - old_class_num
-
-        progress.append(added_num)
+    for num_eval_doc in eval_doc_nums:
+        class_num = old_class_num + num_eval_doc
 
         model = Getmodel(args, embedding_matrix, class_num)
 
-        old_dataloaders, new_dataloaders = filter_Dataloader(args, old_class_num, class_num, datasets, tokenizer)
-
-        dataloaders = old_dataloaders.extend(new_dataloaders)
-
-        hits1 = []
-        hits5 = []
-        hits10 = []
-        mrr10 = []
-
-        splits = ['val queries for old docs', 'test queries for old docs', 'seen generated queries for old docs','unseen generated queries for old docs',
-                  'val queries for new docs', 'test queries for new docs', 'seen generated queries for new docs','unseen generated queries for new docs']
+        doc_types = ['old','new']
+        splits = ['valid', 'test']
+        results = {}
+        for doc_type in doc_types:
+            if doc_type == 'new':
+                filter_docs_list = joblib.load(os.path.join(args.base_data_dir, f'{doc_type}_docs', 'doc_list.pkl'))
+                filter_docs_list = filter_docs_list[:num_eval_doc]
+            for split in splits:
+                print(doc_type, split)
+                if doc_type == 'new':
+                    h1, h5, h10, mrr_10 = validate_script(args, tokenizer, model, doc_type, split, filter_docs_list)
+                else:
+                    h1, h5, h10, mrr_10 = validate_script(args, tokenizer, model, doc_type, split)
+                results[f'{doc_type}_{split}'] = [h1, h5, h10, mrr_10]
+                print(f'At step {num_eval_doc}:')
+                print(f'{doc_type}_{split}: {results[f"{doc_type}_{split}"]}')
+        results_list.append(results)
         
-        for i,split in enumerate(dataloaders):
-            print('*'*100)
-            print(splits[i])
-            acc1, acc5, acc10, mrr_10 = validate(args, model, split)
-            hits1.append(acc1.item())
-            hits5.append(acc5.item())
-            hits10.append(acc10.item())
-            mrr10.append(mrr_10.item())
-
-        print(f'At step {added_num}:')
-        print(splits)
-
-        print(f'hits@1: {hits1}')
-        print(f'hits@5: {hits5}')
-        print(f'hits@10: {hits1}')
-        print(f'mrr@10: {mrr10}')
-
-        h1.append(hits1)
-        h5.append(hits5)
-        h10.append(hits10)
-        m10.append(mrr10)
-
+        
     if not os.path.exists(args.write_path):
         os.mkdir(args.write_path)
 
-    with open(os.path.join(args.write_path, 'eval_results.txt'),'w') as results:
-        results.write(f'Evaluation steps: {progress}' + '\n')
-        results.write(f'splits: {splits}')
-        results.write(f'hits@1: {h1}' + '\n')
-        results.write(f'hits@5: {h5}' + '\n')
-        results.write(f'hits@10: {h10}' + '\n')
-        results.write(f'mrr@10: {m10}' + '\n')
+    timeslist = joblib.load(os.path.join(args.initialize_embeddings, 'timelist.pkl'))
+
+    with open(os.path.join(args.write_path, 'eval_results.txt'),'w') as results_file:
+        for num_eval_doc, results in zip(eval_doc_nums, results_list):
+            results_file.write(f'num_eval_doc: {num_eval_doc}' + '\n')
+            results_file.write(f'time to add: {np.asarray(timeslist[:num_eval_doc]).sum()}' + '\n')
+            for doc_type in doc_types:
+                for split in splits:
+                    assert len(results[f"{doc_type}_{split}"]) == 4
+                    results_file.write(f'{doc_type}_{split}' + '\n')
+                    results_file.write(f'hits@1: {results[f"{doc_type}_{split}"][0]}' + '\n')
+                    results_file.write(f'hits@5: {results[f"{doc_type}_{split}"][1]}' + '\n')
+                    results_file.write(f'hits@10: {results[f"{doc_type}_{split}"][2]}' + '\n')
+                    results_file.write(f'mrr@10: {results[f"{doc_type}_{split}"][3]}' + '\n\n')
 
     print(f'results written.')
 

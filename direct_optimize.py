@@ -49,7 +49,8 @@ def initialize_nq320k(data_dir,
                 train_q_path=None,
                 multiple_queries=False,
                 min_old_q=False,
-                tune=False):
+                tune=False,
+                permutation_seed=None):
     set_seed()
 
     old_docs_list = joblib.load(os.path.join(data_dir, 'old_docs', 'doc_list.pkl'))
@@ -105,7 +106,12 @@ def initialize_nq320k(data_dir,
         doc_split = 'new'
         if 'MSMARCO' in data_dir:
             num_docs = 10000
-    new_docs_list = joblib.load(os.path.join(data_dir, f'{doc_split}_docs', 'doc_list.pkl'))
+    if permutation_seed is None:
+        new_docs_list = joblib.load(os.path.join(data_dir, f'{doc_split}_docs', 'doc_list.pkl'))
+    else:
+        print(f'using permutation seed {permutation_seed}...')
+        permutation_data_dir = '/home/jl3353/dsi/data/NQ320k/new_docs'
+        new_docs_list = joblib.load(os.path.join(permutation_data_dir, f'doc_list_seed{permutation_seed}.pkl'))
     if 'MSMARCO' in data_dir:
         new_docs_list = new_docs_list[:num_docs]
     new_gen_q_embeddings = joblib.load(os.path.join(embeddings_path, f'{doc_split}-gen-embeddings.pkl'))
@@ -132,7 +138,7 @@ def addDocs(args, args_valid=None, ax_params=None):
     
     if args.dataset in ['nq320k', 'msmarco']:
         tune = (ax_params is not None) and (not args.tune_on_new)
-        old_docs_list, new_docs_list, train_qs, train_qs_doc_ids, queries, new_gen_q_embeddings, new_gen_q_doc_ids, classifier_layer, old_q_embeddings, old_q_doc_ids, old_gen_q_embeddings, old_gen_q_doc_ids = initialize_nq320k(args.data_dir, args.train_q, args.num_qs, args.embeddings_path, args.model_path, args.train_q_path ,args.multiple_queries, args.min_old_q, tune=tune)
+        old_docs_list, new_docs_list, train_qs, train_qs_doc_ids, queries, new_gen_q_embeddings, new_gen_q_doc_ids, classifier_layer, old_q_embeddings, old_q_doc_ids, old_gen_q_embeddings, old_gen_q_doc_ids = initialize_nq320k(args.data_dir, args.train_q, args.num_qs, args.embeddings_path, args.model_path, args.train_q_path ,args.multiple_queries, args.min_old_q, tune, args.permutation_seed)
     else:
         raise ValueError(f'Invalid dataset: {args.dataset}')
     
@@ -153,7 +159,7 @@ def addDocs(args, args_valid=None, ax_params=None):
     # add rows for the new docs
     classifier_layer = torch.cat((classifier_layer, torch.zeros(num_new_docs, embedding_size).to(classifier_layer.device)))
     queries = torch.cat((queries, torch.zeros(num_new_docs, embedding_size, device=queries.device)))
-        
+
     for done, doc_id in enumerate(tqdm(new_docs_list, desc='Adding documents')):
         # this set of hyperparameters is not working
         if len(timelist) == 50 and len(failed_docs) >= 25 and ax_params: 
@@ -161,25 +167,6 @@ def addDocs(args, args_valid=None, ax_params=None):
             print("Failed docs: ", len(failed_docs))
             print(ax_params)
             return 0.0 
-        if args.init == 'random':
-            x = torch.nn.Linear(embedding_size, 1).weight.data.squeeze()
-        elif args.init == 'mean':
-            x = torch.mean(classifier_layer[:added_counter],0).clone().detach()
-        elif args.init == 'max':
-            raise NotImplementedError
-            q = embeddings_new[j]
-            x = classifier_layer[torch.argmax(torch.matmul(classifier_layer[:added_counter], q.to(classifier_layer.device))).item()].clone().detach()        
-        x = x.to('cuda')
-        x.requires_grad = True
-        if args.optimizer == 'lbfgs':
-            optimizer = LBFGS([x], lr=lr, tolerance_change=args.lbfgs_tolerance, line_search_fn='strong_wolfe')
-        elif args.optimizer == 'sgd':
-            optimizer = SGD([x], lr=lr)
-        elif args.optimizer == 'armijo_sgd': # SGD + line search
-            optimizer = ArmijoSGD([x], lr=lr, c=0.5, tau=0.5)
-        else:
-            raise NotImplementedError
-        classifier_layer = classifier_layer.to('cuda')      
         
         qs = new_gen_q_embeddings[new_gen_q_doc_ids == doc_id][:args.num_qs]
         qs = qs.to('cuda')
@@ -192,6 +179,26 @@ def addDocs(args, args_valid=None, ax_params=None):
         
         if args.mean_new_q:
             qs = torch.mean(qs, 0, keepdim=True)
+
+        if args.init == 'random':
+            x = torch.nn.Linear(embedding_size, 1).weight.data.squeeze()
+        elif args.init == 'mean':
+            x = torch.mean(classifier_layer[:added_counter],0).clone().detach()
+        elif args.init == 'mean_dpr':
+            x = torch.mean(qs, dim=0).clone().detach()
+        elif args.init == 'max':
+            x = classifier_layer[torch.argmax(torch.einsum('nd,md->n', classifier_layer[:added_counter], qs)).item()].clone().detach()        
+        x = x.to('cuda')
+        x.requires_grad = True
+        if args.optimizer == 'lbfgs':
+            optimizer = LBFGS([x], lr=lr, tolerance_change=args.lbfgs_tolerance, line_search_fn='strong_wolfe')
+        elif args.optimizer == 'sgd':
+            optimizer = SGD([x], lr=lr)
+        elif args.optimizer == 'armijo_sgd': # SGD + line search
+            optimizer = ArmijoSGD([x], lr=lr, c=0.5, tau=0.5)
+        else:
+            raise NotImplementedError
+        classifier_layer = classifier_layer.to('cuda')      
         # compute document score for each query
         prod_to_old = torch.einsum('nd,md->nm', classifier_layer[:added_counter], qs)
         max_vals = torch.max(prod_to_old, dim=0).values
@@ -247,7 +254,7 @@ def addDocs(args, args_valid=None, ax_params=None):
                 delta_norm = torch.linalg.vector_norm(x-x_prev).item()
                 if delta_norm < args.update_tolerance:
                     break
-            
+        
             if loss == 0: break
         if loss > 200 and ax_params is not None:
             # Bad hyperparams, return early
@@ -303,13 +310,13 @@ def addDocs(args, args_valid=None, ax_params=None):
         
     return failed_docs, classifier_layer, queries, np.asarray(timelist).mean(), timelist
 
-def validate_on_splits(val_dir, model_path, data_dir, write_path_dir=None):
+def validate_on_splits(val_dir, model_path, data_dir, write_path_dir=None, permutation_seed=None):
     eval_doc_type = 'new'
     classifier_layer_path = os.path.join(val_dir, 'classifier_layer.pkl')
     args_valid = get_validation_arguments(model_path, classifier_layer_path, data_dir)
     classifier_layer = joblib.load(classifier_layer_path)
     model, tokenizer = initialize_model(model_path, classifier_layer)
-    hit_at_1, hit_at_5, hit_at_10, mrr_at_10 = validate_script(args_valid, tokenizer, model, doc_type=eval_doc_type, split='unseenq')
+    hit_at_1, hit_at_5, hit_at_10, mrr_at_10 = validate_script(args_valid, tokenizer, model, doc_type=eval_doc_type, split='unseenq', permutation_seed=permutation_seed)
     print('Accuracy on new generated queries')
     print(hit_at_1, hit_at_5, hit_at_10, mrr_at_10)
 
@@ -324,7 +331,7 @@ def validate_on_splits(val_dir, model_path, data_dir, write_path_dir=None):
 
 
     for split in ['valid', 'test']:
-        hit_at_1, hit_at_5, hit_at_10, mrr_at_10 = validate_script(args_valid, tokenizer, model, doc_type='old', split=split)
+        hit_at_1, hit_at_5, hit_at_10, mrr_at_10 = validate_script(args_valid, tokenizer, model, doc_type='old', split=split, permutation_seed=permutation_seed)
         print(f'Accuracy on old {split} queries')
         print(hit_at_1, hit_at_5, hit_at_10, mrr_at_10)
 
@@ -337,7 +344,7 @@ def validate_on_splits(val_dir, model_path, data_dir, write_path_dir=None):
                 f.write(f'hit_at_10: {hit_at_10}\n')
                 f.write(f'mrr_at_10: {mrr_at_10}\n')
 
-        hit_at_1, hit_at_5, hit_at_10, mrr_at_10 = validate_script(args_valid, tokenizer, model, doc_type=eval_doc_type, split=split)
+        hit_at_1, hit_at_5, hit_at_10, mrr_at_10 = validate_script(args_valid, tokenizer, model, doc_type=eval_doc_type, split=split, permutation_seed=permutation_seed)
         print(f'Accuracy on {eval_doc_type} {split} queries')
         print(hit_at_1, hit_at_5, hit_at_10, mrr_at_10)
 
@@ -394,10 +401,12 @@ def get_arguments():
     parser.add_argument("--mean_new_q", action="store_true", help="uses the old query with the tightest constraint")
     parser.add_argument("--DSIplus", action="store_true", help="whether or not in the dsi++ setting")
 
+    parser.add_argument("--permutation_seed", default=None, type=int, help="seed for permutation of new docs")
+
     parser.add_argument(
         "--init", 
         default='random', 
-        choices=['random', 'mean', 'max'], 
+        choices=['random', 'mean', 'mean_dpr', 'max'], 
         help='way to initialize the classifier vector')
     parser.add_argument(
         "--data_dir", 
@@ -706,9 +715,9 @@ def main():
             else:
                 raise NotImplementedError
             parameters += [
-                {"name": "lambda", "value_type": "float", "type": "range", "bounds": [.001, .999], "log_scale": False},
-                {"name": "m1", "value_type": "float", "type": "range", "bounds": [0.0, 5.0], "log_scale": False},
-                {"name": "m2", "value_type": "float", "type": "range", "bounds": [0.0, 15.0], "log_scale": False},
+                {"name": "lambda", "value_type": "float", "type": "range", "bounds": [.05, .95], "log_scale": False},
+                {"name": "m1", "value_type": "float", "type": "range", "bounds": [0.0, 10.0], "log_scale": False},
+                {"name": "m2", "value_type": "float", "type": "range", "bounds": [0.0, 10.0], "log_scale": False},
                 {"name": "l2_reg", "value_type": "float", "type": "range", "bounds": [1e-10, 1e-3], "log_scale": True},
                 {"name": "noise_scale", "type": "fixed", "value": 0.0, "log_scale": False }
             ]
@@ -778,7 +787,7 @@ def main():
             f.write(f'Num failed docs: {len(failed_docs)}\n')
             f.write(f'Final time: {np.asarray(timelist).sum()}\n')
 
-        validate_on_splits(args.write_path_dir, args.model_path, args.data_dir, args.write_path_dir)
+        validate_on_splits(args.write_path_dir, args.model_path, args.data_dir, args.write_path_dir, args.permutation_seed)
 
 
 if __name__ == "__main__":
