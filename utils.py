@@ -1,6 +1,7 @@
 import collections
 import os 
 import pickle as pkl
+import joblib
 import numpy as np
 import pandas as pd
 from torch import nn
@@ -14,10 +15,9 @@ def load_ance_embeddings(
         load_path,
         step_num=0):
 
-
     data_list = []
     data_list_id = []
-    world_size = 4
+    world_size = 2
     prefix_passage = "ann_NQ_test/ann_data/passage_"+ str(step_num)+ "__emb_p_"
     prefix_passage_id = "ann_NQ_test/ann_data/passage_"+ str(step_num)+ "__embid_p_"
 
@@ -50,9 +50,13 @@ def load_ance_embeddings(
     embedding_matrix = data_array_agg[np.argsort(data_array_agg_id)] 
 
     # HARDCODING path from NQ v2 for now
-    ques2doc = pkl.load(open(os.path.join("/home/vk352/ANCE/NQ320k_dataset_v2", "quesid2docid.pkl"), 'rb'))
+    ques2doc = pkl.load(open(os.path.join("/home/vk352/dsi/data/NQ320k/old_docs", "quesid2docid.pkl"), 'rb'))
     pid2offset, offset2pid = load_mapping(load_path, "pid2offset")
     doc_ids = [ques2doc[offset2pid[i]] for i in range(len(data_array_agg))]
+
+    # TODO remove this
+    doc_class = joblib.load(os.path.join('/home/vk352/dsi/data/NQ320k/old_docs', 'doc_class.pkl'))
+    doc_ids = [doc_class[doc_id] for doc_id in doc_ids]
 
     embedding_matrix_pd = pd.DataFrame(embedding_matrix)
     embedding_matrix_pd.insert(0, "doc_ids", doc_ids)

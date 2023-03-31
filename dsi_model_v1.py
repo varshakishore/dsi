@@ -232,6 +232,12 @@ def get_arguments():
     )
 
     parser.add_argument(
+        "--doc_index_only",
+        action="store_true",
+        help="like dsi perform indexing with doc text as well",
+    )
+
+    parser.add_argument(
         "--get_subsampled_train_dataloader",
         action="store_true",
         help="randomly sample equal number of old docs",
@@ -550,6 +556,9 @@ def main():
     if args.doc_index:
         doc_data = load_dataset_helper(os.path.join(args.base_data_dir, 'old_docs', 'doc.json'))
 
+    if args.doc_index_only:
+        doc_data = load_dataset_helper(os.path.join(args.base_data_dir, 'old_docs', 'doc.json'))
+
     if args.base_data_dir_new or args.test_only:
         train_data_new = load_dataset_helper(os.path.join(args.base_data_dir_new, 'trainqueries.json'))
         generated_queries_new = load_dataset_helper(os.path.join(args.base_data_dir_new, 'passages_seen.json'))
@@ -605,7 +614,7 @@ def main():
     ### Use pre_calculated weights to initialize the projection matrix
     if args.initialize_embeddings:
         if args.ance_embeddings:
-            embedding_matrix = load_ance_embeddings(args.initialize_embeddings, 15000)
+            embedding_matrix = load_ance_embeddings(args.initialize_embeddings, 0)
             model.classifier.weight.data = torch.from_numpy(embedding_matrix)
         else:
             embedding_matrix = joblib.load(args.initialize_embeddings)
@@ -635,6 +644,11 @@ def main():
     if args.doc_index:
         DSIQG_doc = DSIqgDocDataset(tokenizer=tokenizer, datadict = doc_data, doc_class=doc_class)
         Train_DSIQG = ConcatDataset([Train_DSIQG, DSIQG_doc])
+
+    if args.doc_index_only:
+        DSIQG_doc = DSIqgDocDataset(tokenizer=tokenizer, datadict = doc_data, doc_class=doc_class)
+        # Train_DSIQG = ConcatDataset([DSIQG_train, DSIQG_doc])
+        Train_DSIQG = DSIQG_doc
     Val_DSIQG = DSIQG_val
 
     if args.base_data_dir_new or args.test_only:
