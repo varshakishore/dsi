@@ -341,9 +341,7 @@ def train(args, model, train_dataloader, optimizer, length, scheduler=None, i=0)
     logger.info(f'Loss:{tr_loss/(i+1)}')
     return tr_loss
 
-def validate(args, model, val_dataloader, restrict_decode_vocab, epoch):
-    if epoch == 0:
-        return 0, 0, 0, 0
+def validate(args, model, val_dataloader, restrict_decode_vocab):
 
     model.eval()
 
@@ -354,10 +352,6 @@ def validate(args, model, val_dataloader, restrict_decode_vocab, epoch):
     val_loss = 0
 
     device = torch.device('cuda')
-
-    if epoch == 1:
-        import pdb; pdb.set_trace()
-
 
     for i,inputs in tqdm(enumerate(val_dataloader), desc='Evaluating dev queries'):
                     
@@ -375,9 +369,13 @@ def validate(args, model, val_dataloader, restrict_decode_vocab, epoch):
                     num_return_sequences=10,
                     early_stopping=True, )
 
-        
+            #declare dtype to be string of length i
+
+            seq_length = batch_beams.shape[-1]
             rank_list = np.vectorize(id2token_map.__getitem__)(batch_beams.cpu())
-            rank_list = np.apply_along_axis(''.join, 1, rank_list).reshape(inputs['input_ids'].shape[0], 10)
+            # rank_list = np.apply_along_axis(''.join, 1, rank_list).reshape(inputs['input_ids'].shape[0], 10)
+            rank_list = np.apply_along_axis(lambda x: np.array(''.join(x), dtype=f'<U{seq_length}'), 1, rank_list)
+            rank_list = rank_list.reshape(inputs['input_ids'].shape[0], 10)
 
             hit_at_1 += (labels_str == rank_list[:, 0]).sum()
             print(i, hit_at_1)
@@ -390,9 +388,6 @@ def validate(args, model, val_dataloader, restrict_decode_vocab, epoch):
 
             #compute mrr@10. Sum will later be divided by number of elements
             mrr_at_10 += (1/ (np.where(labels_str == rank_list)[1] + 1)).sum()
-
-    if epoch == 1:
-        import pdb; pdb.set_trace()
             
     return hit_at_1, hit_at_5, hit_at_10, mrr_at_10
 
@@ -859,7 +854,7 @@ def main():
             # logger.info(f'Train Loss: {tr_loss}')
 
             # scheduler.step()
-            hit_at_1, hit_at_5, hit_at_10, mrr_at_10 = validate(args, model, val_dataloader, restrict_decode_vocab, i)
+            hit_at_1, hit_at_5, hit_at_10, mrr_at_10 = validate(args, model, val_dataloader, restrict_decode_vocab)
 
             logger.info(f'Epoch: {i+1}')
             logger.info(f'Evaluation Accuracy: {hit_at_1} / {val_length} = {hit_at_1/val_length}')
