@@ -27,13 +27,19 @@ class DSIqgTrainDataset(Dataset):
             self,
             tokenizer: PreTrainedTokenizer,
             datadict,
-            doc_class):
+            doc_class, 
+            semantic_id_map=None):
         super().__init__()
         self.train_data = datadict
         
         self.tokenizer = tokenizer
         self.total_len = len(self.train_data)
         self.doc_class = doc_class
+
+        self.semantic_id_map = semantic_id_map
+        if semantic_id_map:
+            # max length of semantic ids + 1 for eos token
+            self.seq_len = len(next(iter(semantic_id_map.values()))) + 1 
 
 
     def __len__(self):
@@ -47,12 +53,19 @@ class DSIqgTrainDataset(Dataset):
                                    truncation="only_first",
                                   max_length=32).input_ids[0]
         
-        doc_id_str = str(self.doc_class[data['doc_id']])
-
-        doc_ids = self.tokenizer.encode(list(doc_id_str),
-                                   return_tensors="pt",
-                                   truncation="only_first",
-                                  max_length=8, padding='max_length') 
+        if self.semantic_id_map:
+            ids = list(map(str, self.semantic_id_map[data['doc_id']]))
+            doc_ids = self.tokenizer.encode(ids,
+                                       return_tensors="pt",
+                                       truncation="only_first",
+                                      max_length=self.seq_len, padding='max_length')
+            doc_id_str = ' '.join(ids)
+        else:
+            doc_id_str = str(self.doc_class[data['doc_id']])
+            doc_ids = self.tokenizer.encode(list(doc_id_str),
+                                    return_tensors="pt",
+                                    truncation="only_first",
+                                    max_length=8, padding='max_length') 
         
         return input_ids, doc_ids, doc_id_str
 
@@ -61,13 +74,20 @@ class DSIqgDocDataset(Dataset):
             self,
             tokenizer: PreTrainedTokenizer,
             datadict,
-            doc_class):
+            doc_class,
+            semantic_id_map=None):
         super().__init__()
         self.train_data = datadict
         
         self.tokenizer = tokenizer
         self.total_len = len(self.train_data)
         self.doc_class = doc_class
+
+        self.semantic_id_map = semantic_id_map
+        if semantic_id_map:
+            # max length of semantic ids + 1 for eos token
+            self.seq_len = len(next(iter(semantic_id_map.values()))) + 1 
+
 
 
     def __len__(self):
@@ -81,12 +101,19 @@ class DSIqgDocDataset(Dataset):
                                    truncation="only_first",
                                   max_length=32).input_ids[0]
         
-        doc_id_str = str(self.doc_class[data['doc_id']])
-
-        doc_ids = self.tokenizer.encode(list(doc_id_str),
-                                   return_tensors="pt",
-                                   truncation="only_first",
-                                  max_length=8, padding='max_length') 
+        if self.semantic_id_map:
+            ids = list(map(str, self.semantic_id_map[data['doc_id']]))
+            doc_ids = self.tokenizer.encode(ids,
+                                       return_tensors="pt",
+                                       truncation="only_first",
+                                      max_length=self.seq_len, padding='max_length')
+            doc_id_str = ' '.join(ids)
+        else:
+            doc_id_str = str(self.doc_class[data['doc_id']])
+            doc_ids = self.tokenizer.encode(list(doc_id_str),
+                                    return_tensors="pt",
+                                    truncation="only_first",
+                                    max_length=8, padding='max_length') 
         
         return input_ids, doc_ids, doc_id_str
     
@@ -96,13 +123,19 @@ class GenPassageDataset(Dataset):
             self,
             tokenizer: PreTrainedTokenizer,
             datadict,
-            doc_class):
+            doc_class,
+            semantic_id_map=None):
         super().__init__()
         self.train_data = datadict
         
         self.tokenizer = tokenizer
         self.total_len = len(self.train_data)
         self.doc_class = doc_class
+
+        self.semantic_id_map = semantic_id_map
+        if semantic_id_map:
+            # max length of semantic ids + 1 for eos token
+            self.seq_len = len(next(iter(semantic_id_map.values()))) + 1 
 
 
     def __len__(self):
@@ -116,12 +149,19 @@ class GenPassageDataset(Dataset):
                                    truncation="only_first",
                                   max_length=32).input_ids[0]
         
-        doc_id_str = str(self.doc_class[data['doc_id']])
-
-        doc_ids = self.tokenizer.encode(list(doc_id_str),
-                                   return_tensors="pt",
-                                   truncation="only_first",
-                                  max_length=8, padding='max_length') 
+        if self.semantic_id_map:
+            ids = list(map(str, self.semantic_id_map[data['doc_id']]))
+            doc_ids = self.tokenizer.encode(ids,
+                                       return_tensors="pt",
+                                       truncation="only_first",
+                                      max_length=self.seq_len, padding='max_length')
+            doc_id_str = ' '.join(ids)
+        else:
+            doc_id_str = str(self.doc_class[data['doc_id']])
+            doc_ids = self.tokenizer.encode(list(doc_id_str),
+                                    return_tensors="pt",
+                                    truncation="only_first",
+                                    max_length=8, padding='max_length') 
         
         return input_ids, doc_ids, doc_id_str
 
@@ -201,7 +241,7 @@ def get_arguments():
     )
 
     parser.add_argument(
-        "--freeze_base_model",
+        "--freeze_lm",
         action="store_true",
         help="for freezing the parameters of the base model",
     )
@@ -270,6 +310,33 @@ def get_arguments():
         action="store_true",
         help="train with new queries only",
     )
+
+    parser.add_argument(
+        "--semantic_id_path",
+        type=str,
+        default=None,
+        help="path to semantic id map",
+    )
+
+    parser.add_argument(
+        "--averaging_path",
+        type=str,
+        default=None,
+        help="path to averaging map",
+    )
+
+    parser.add_argument(
+        "--alpha",
+        type=float,
+        default=0.5,
+        help="alpha for averaging",
+    )
+
+    parser.add_argument(
+        "--ewc",
+        action="store_true",
+        help="ewc",
+    )
     
 
     args = parser.parse_args()
@@ -293,7 +360,7 @@ class IndexingCollator(DataCollatorWithPadding):
         
         return inputs
 
-def train(args, model, train_dataloader, optimizer, length, scheduler=None, i=0):
+def train(args, model, train_dataloader, optimizer, length, scheduler=None, i=0, precision_matrices=None, ewc_weights=None):
     global global_step
 
     model.train()
@@ -312,16 +379,22 @@ def train(args, model, train_dataloader, optimizer, length, scheduler=None, i=0)
         # if i%50 == 0:
         #     import pdb; pdb.set_trace()
         
+        ewc_loss = 0
+        if precision_matrices:
+            for n, p in model.named_parameters():
+                ewc_loss += (precision_matrices[n] * (p - ewc_weights[n]) ** 2).sum()
         
         if (i) % args.logging_step == 0 and i > 0:
             logger.info(f'Train step: {i}, loss: {(tr_loss/args.logging_step).item()}, Global step: {global_step}')
+            logger.info(f'EWC loss: {ewc_loss.item()}, other loss: {loss.item()}')
             if args.wandb_name:
                 wandb.log({'train_loss': (tr_loss/args.logging_step).item()})
                 wandb.log({'learning_rate': scheduler.get_last_lr()[0]})
                 wandb.log({'learning_rate_cp': scheduler.get_last_lr()[0]}, step=global_step)
             
             tr_loss = torch.tensor(0.0).to(device)
-
+        
+        loss += 50 * ewc_loss
         tr_loss += loss
 
         loss.backward()
@@ -341,7 +414,7 @@ def train(args, model, train_dataloader, optimizer, length, scheduler=None, i=0)
     logger.info(f'Loss:{tr_loss/(i+1)}')
     return tr_loss
 
-def validate(args, model, val_dataloader, restrict_decode_vocab):
+def validate(args, model, val_dataloader, restrict_decode_vocab, atomic_ids=False):
 
     model.eval()
 
@@ -352,6 +425,7 @@ def validate(args, model, val_dataloader, restrict_decode_vocab):
     val_loss = 0
 
     device = torch.device('cuda')
+
 
     for i,inputs in tqdm(enumerate(val_dataloader), desc='Evaluating dev queries'):
                     
@@ -369,16 +443,21 @@ def validate(args, model, val_dataloader, restrict_decode_vocab):
                     num_return_sequences=10,
                     early_stopping=True, )
 
-            #declare dtype to be string of length i
-
-            seq_length = batch_beams.shape[-1]
             rank_list = np.vectorize(id2token_map.__getitem__)(batch_beams.cpu())
-            # rank_list = np.apply_along_axis(''.join, 1, rank_list).reshape(inputs['input_ids'].shape[0], 10)
-            rank_list = np.apply_along_axis(lambda x: np.array(''.join(x), dtype=f'<U{seq_length}'), 1, rank_list)
-            rank_list = rank_list.reshape(inputs['input_ids'].shape[0], 10)
+            
+            if atomic_ids:
+                # declare dtype to be string of length i
+                seq_length = batch_beams.shape[-1]
+                rank_list = np.apply_along_axis(lambda x: np.array(''.join(x), dtype=f'<U{seq_length}'), 1, rank_list)
+                rank_list = rank_list.reshape(inputs['input_ids'].shape[0], 10)
+            else:
+                rank_list_tp = []
+                for sublist in rank_list:
+                    rank_list_tp.append(' '.join(list(filter(None, sublist))))
+
+                rank_list = np.asarray(rank_list_tp).reshape(inputs['input_ids'].shape[0], 10)
 
             hit_at_1 += (labels_str == rank_list[:, 0]).sum()
-            print(i, hit_at_1)
             
             labels_str = np.expand_dims(labels_str, axis=1)
 
@@ -390,109 +469,6 @@ def validate(args, model, val_dataloader, restrict_decode_vocab):
             mrr_at_10 += (1/ (np.where(labels_str == rank_list)[1] + 1)).sum()
             
     return hit_at_1, hit_at_5, hit_at_10, mrr_at_10
-
-def validate_script(args, tokenizer, model, doc_type=None, split=None):
-
-    device = torch.device("cuda")
-
-    logging.info(f'Device: {device}')
-
-    if doc_type == "old":
-        data_dir = os.path.join(args.base_data_dir, 'old_docs')
-        doc_class = joblib.load(os.path.join(data_dir, 'doc_class.pkl'))
-    elif doc_type == "new":
-        data_dir = os.path.join(args.base_data_dir, 'new_docs')
-        doc_class = joblib.load(os.path.join(data_dir, 'doc_class.pkl'))
-        if 'MSMARCO' in args.base_data_dir:
-            doc_list = joblib.load(os.path.join(data_dir, 'doc_list.pkl'))
-            doc_list = doc_list[:10000]
-    elif doc_type == "tune":
-        data_dir = os.path.join(args.base_data_dir, 'tune_docs')
-        doc_class = joblib.load(os.path.join(data_dir, 'doc_class.pkl'))
-        if 'MSMARCO' in args.base_data_dir:
-            doc_list = joblib.load(os.path.join(data_dir, 'doc_list.pkl'))
-            doc_list = doc_list[:1000]
-    else:
-        raise ValueError(f'doc_type={doc_type} must be old, new, or tune')
-
-    if split == "train":
-
-        data = datasets.load_dataset(
-        'json',
-        data_files=os.path.join(data_dir, 'trainqueries.json'),
-        ignore_verifications=False,
-        cache_dir='cache'
-        )['train']
-
-        print('train set loaded')
-
-    elif split == "valid":
-        data = datasets.load_dataset(
-        'json',
-        data_files=os.path.join(data_dir, 'valqueries.json'),
-        ignore_verifications=False,
-        cache_dir='cache'
-        )['train']
-
-        print('validation set loaded')
-
-    elif split == "test":
-        data = datasets.load_dataset(
-        'json',
-        data_files=os.path.join(data_dir, 'testqueries.json'),
-        ignore_verifications=False,
-        cache_dir='cache'
-        )['train']
-
-        print('test set loaded')
-
-    elif split == "seenq":
-        data = datasets.load_dataset(
-            'json',
-            data_files=os.path.join(data_dir, 'passages_seen.json'),
-            ignore_verifications=False,
-            cache_dir='cache'
-        )['train']   
-
-        print('seen generated queries loaded')
-
-    elif split == "unseenq":
-        data = datasets.load_dataset(
-        'json',
-        data_files=os.path.join(data_dir, 'passages_unseen.json'),
-        ignore_verifications=False,
-        cache_dir='cache'
-        )['train']
-
-        print('unseen generated queries loaded')
-    else:
-        raise ValueError(f'split={split} must be train, valid, test, seenq, or unseenq')
-    
-    if 'MSMARCO' in args.base_data_dir and doc_type in {'new', 'tune'}:
-        data = data.filter(lambda example: example['doc_id'] in doc_list)
-
-    if split == "train" or split == "valid" or split == 'test':
-        dataset =  DSIqgTrainDataset(tokenizer=tokenizer, datadict = data, doc_class = doc_class)
-
-    elif split == "seenq" or split == "unseenq":
-        dataset = GenPassageDataset(tokenizer=tokenizer, datadict = data, doc_class = doc_class)
-
-    dataloader = DataLoader(dataset, 
-                            batch_size=args.batch_size,
-                            collate_fn=IndexingCollator(
-                            tokenizer,
-                            padding='longest'),
-                            shuffle=False,
-                            drop_last=False)
-
-    hits_at_1, hits_at_5, hits_at_10, mrr_at_10 = validate(args, model, dataloader)
-    length = len(dataloader.dataset)
-    hits_at_1 = hits_at_1/length
-    hits_at_5 = hits_at_5/length
-    hits_at_10 = hits_at_10/length
-    mrr_at_10 = mrr_at_10/length
-
-    return hits_at_1, hits_at_5, hits_at_10, mrr_at_10
 
 def set_seed(seed):
     random.seed(seed)
@@ -542,7 +518,7 @@ def main():
 
     set_seed(args.seed)
 
-    if not args.validate_only or not args.test_only:
+    if not args.validate_only and not args.test_only:
         if args.wandb_name:
             wandb.init(project="dsi-string-new", name=args.wandb_name)
 
@@ -619,16 +595,27 @@ def main():
         print('Model not supported')
         raise NotImplementedError
     
+    if args.semantic_id_path:
+        semantic_id_map = joblib.load(args.semantic_id_path)
+        # assuming that the file name is semantic_id_map_i where i is the number of digits
+        num_digits = int("/home/vk352/dsi/data/semantic_id_map_30".split('_')[-1])
+        atomic_ids = False
+    else:
+        semantic_id_map = None
+        num_digits = 10
+        atomic_ids = True
+    
     SPIECE_UNDERLINE = "▁"
     INT_TOKEN_IDS = []
     for token, id in tokenizer.get_vocab().items():
         if token[0] == SPIECE_UNDERLINE:
-            if token[1:].isdigit() and len(token) == 1:
+            if token[1:].isdigit() and len(token) == 1: 
                 INT_TOKEN_IDS.append(id)
         if token == SPIECE_UNDERLINE:
             INT_TOKEN_IDS.append(id)
-        elif token.isdigit() and len(token) == 1:
-            INT_TOKEN_IDS.append(id)
+        elif token.isdigit():
+            if int(token) < num_digits:
+                INT_TOKEN_IDS.append(id)
     INT_TOKEN_IDS.append(tokenizer.eos_token_id)
 
     global id2token_map
@@ -639,46 +626,64 @@ def main():
 
     def restrict_decode_vocab(batch_idx, prefix_beam):
         return INT_TOKEN_IDS
-
-    # load saved model if initialize_model
-    # TODO check if anything needs to be changed for string dsi
-    if args.initialize_model:
-        load_saved_weights(model, args.initialize_model, strict_set=False, load_classifier=False)
-
+    
     model = torch.nn.DataParallel(model)
     model.to(device)
+
+    if args.initialize_model:
+        state_dict = torch.load(args.initialize_model)
+
+        if args.averaging_path:
+            state_dict_other = torch.load(args.averaging_path)
+
+            # average the state dicts
+            for key in state_dict.keys():
+                state_dict[key] = (args.alpha*state_dict[key] + (1-args.alpha)*state_dict_other[key])
+
+
+        model.load_state_dict(state_dict, strict=True)
+
+    model.to(device)
+
+    # freezing the classifier
+    if args.freeze_lm:
+        for name, param in model.named_parameters():
+            if 'shared.weight' in name or 'lm_head.weight' in name:
+                param.requires_grad = False
 
     logger.info('model loaded')
 
     doc_class = joblib.load(os.path.join(args.base_data_dir, 'old_docs', 'doc_class.pkl'))
 
-    DSIQG_train = DSIqgTrainDataset(tokenizer=tokenizer, datadict = train_data, doc_class=doc_class)
-    DSIQG_val = DSIqgTrainDataset(tokenizer=tokenizer, datadict = val_data, doc_class=doc_class)
-    gen_queries = GenPassageDataset(tokenizer=tokenizer, datadict = generated_queries, doc_class=doc_class)
+    DSIQG_train = DSIqgTrainDataset(tokenizer=tokenizer, datadict = train_data, doc_class=doc_class, semantic_id_map=semantic_id_map)
+    DSIQG_val = DSIqgTrainDataset(tokenizer=tokenizer, datadict = val_data, doc_class=doc_class, semantic_id_map=semantic_id_map)
+    gen_queries = GenPassageDataset(tokenizer=tokenizer, datadict = generated_queries, doc_class=doc_class, semantic_id_map=semantic_id_map)
 
     Train_DSIQG = ConcatDataset([DSIQG_train, gen_queries])
     if args.doc_index:
-        DSIQG_doc = DSIqgDocDataset(tokenizer=tokenizer, datadict = doc_data, doc_class=doc_class)
+        DSIQG_doc = DSIqgDocDataset(tokenizer=tokenizer, datadict = doc_data, doc_class=doc_class, semantic_id_map=semantic_id_map)
         Train_DSIQG = ConcatDataset([Train_DSIQG, DSIQG_doc])
     Val_DSIQG = DSIQG_val
 
     if args.base_data_dir_new or args.test_only:
-        DSIQG_train_new = DSIqgTrainDataset(tokenizer=tokenizer, datadict = train_data_new, doc_class=doc_class)
-        DSIQG_val_new = DSIqgTrainDataset(tokenizer=tokenizer, datadict = val_data_new, doc_class=doc_class)
-        gen_queries_new = GenPassageDataset(tokenizer=tokenizer, datadict = generated_queries_new, doc_class=doc_class)
+        DSIQG_train_new = DSIqgTrainDataset(tokenizer=tokenizer, datadict = train_data_new, doc_class=doc_class, semantic_id_map=semantic_id_map)
+        DSIQG_val_new = DSIqgTrainDataset(tokenizer=tokenizer, datadict = val_data_new, doc_class=doc_class, semantic_id_map=semantic_id_map)
+        gen_queries_new = GenPassageDataset(tokenizer=tokenizer, datadict = generated_queries_new, doc_class=doc_class, semantic_id_map=semantic_id_map)
 
         if args.new_only:
             Train_DSIQG = ConcatDataset([DSIQG_train_new, gen_queries_new])
+            if args.ewc:
+                Train_DSIQG_ewc = Train_DSIQG
         else:
             Train_DSIQG = ConcatDataset([Train_DSIQG, DSIQG_train_new, gen_queries_new])
         if args.doc_index:
-            DSIQG_doc_new = DSIqgDocDataset(tokenizer=tokenizer, datadict = doc_data_new, doc_class=doc_class)
+            DSIQG_doc_new = DSIqgDocDataset(tokenizer=tokenizer, datadict = doc_data_new, doc_class=doc_class, semantic_id_map=semantic_id_map)
             Train_DSIQG = ConcatDataset([Train_DSIQG, DSIQG_doc_new])
         Val_DSIQG_NEW = DSIQG_val_new
 
     if args.test_only:
-        DSIQG_test = DSIqgTrainDataset(tokenizer=tokenizer, datadict = test_data, doc_class=doc_class)
-        DSIQG_test_new = DSIqgTrainDataset(tokenizer=tokenizer, datadict = test_data_new, doc_class=doc_class)
+        DSIQG_test = DSIqgTrainDataset(tokenizer=tokenizer, datadict = test_data, doc_class=doc_class, semantic_id_map=semantic_id_map)
+        DSIQG_test_new = DSIqgTrainDataset(tokenizer=tokenizer, datadict = test_data_new, doc_class=doc_class, semantic_id_map=semantic_id_map)
 
 
     def get_parameter_names(model, forbidden_layer_types):
@@ -766,6 +771,14 @@ def main():
                                 padding='longest'),
                                 sampler=train_sampler,
                                 drop_last=False)
+    
+    if args.ewc:
+        train_dataloader_ewc = DataLoader(Train_DSIQG_ewc, 
+                                    batch_size=args.batch_size,
+                                    collate_fn=IndexingCollator(
+                                    tokenizer,
+                                    padding='longest'),
+                                    drop_last=False)
 
     if args.base_data_dir_new or args.test_only:
         val_dataloader_new = DataLoader(Val_DSIQG_NEW, 
@@ -793,6 +806,32 @@ def main():
                                     shuffle=False,
                                     drop_last=False)
 
+    if args.ewc:
+        precision_matrices = {}
+        
+        model_ewc_sd = torch.load(args.initialize_model)
+        model_ewc = T5ForConditionalGeneration.from_pretrained(args.model_name, cache_dir='cache')
+        model_ewc = torch.nn.DataParallel(model_ewc)
+        model_ewc.load_state_dict(model_ewc_sd)
+        len_data_ewc = len(train_dataloader_ewc.dataset)
+        model_ewc.to(device)
+
+        for n, p in model_ewc.named_parameters():
+            precision_matrices[n] = p.clone().detach().fill_(0)
+
+        for inputs in tqdm(train_dataloader_ewc):
+            model.zero_grad()
+            del inputs['docid_str']
+            inputs.to(device)
+
+            loss = model_ewc(input_ids=inputs['input_ids'].long(), attention_mask=inputs['attention_mask'], labels=inputs['labels']).loss
+            loss.backward()
+
+            for n, p in model_ewc.named_parameters():
+                precision_matrices[n].data += p.grad ** 2 / len_data_ewc
+
+        del model_ewc
+    
     # global_step = 0
 
     # global_step=0
@@ -801,29 +840,29 @@ def main():
     # train(args, model, train_dataloader, optimizer, length, scheduler)
     if args.test_only:
         logger.info('Testing')
-        hit_at_1, hit_at_5, hit_at_10, mrr_at_10 = validate(args, model, test_dataloader, restrict_decode_vocab)
+        hit_at_1, hit_at_5, hit_at_10, mrr_at_10 = validate(args, model, test_dataloader, restrict_decode_vocab, atomic_ids)
         logger.info(f'Test Accuracy: {hit_at_1} / {test_length} = {hit_at_1/test_length}')
         logger.info(f'Test Hits@5: {hit_at_5} / {test_length} = {hit_at_5/test_length}')
         logger.info(f'Test Hits@10: {hit_at_10} / {test_length} = {hit_at_10/test_length}')
         logger.info(f'MRR@10: {mrr_at_10} / {test_length} = {mrr_at_10/test_length}')
 
-        hit_at_1, hit_at_5, hit_at_10, mrr_at_10 = validate(args, model, test_dataloader_new, restrict_decode_vocab)
+        hit_at_1, hit_at_5, hit_at_10, mrr_at_10 = validate(args, model, test_dataloader_new, restrict_decode_vocab, atomic_ids)
         logger.info(f'Test Accuracy: {hit_at_1} / {test_length_new} = {hit_at_1/test_length_new}')
         logger.info(f'Test Hits@5: {hit_at_5} / {test_length_new} = {hit_at_5/test_length_new}')
         logger.info(f'Test Hits@10: {hit_at_10} / {test_length_new} = {hit_at_10/test_length_new}')
         logger.info(f'MRR@10: {mrr_at_10} / {test_length_new} = {mrr_at_10/test_length_new}')
 
     
-    # hit_at_1, hit_at_5, hit_at_10, mrr_at_10 = validate(args, model, val_dataloader, restrict_decode_vocab)
+    hit_at_1, hit_at_5, hit_at_10, mrr_at_10 = validate(args, model, val_dataloader, restrict_decode_vocab, atomic_ids)
 
-    # logger.info(f'Validation accuracy:')
-    # logger.info(f'Evaluation Accuracy: {hit_at_1} / {val_length} = {hit_at_1/val_length}')
-    # logger.info(f'Evaluation Hits@5: {hit_at_5} / {val_length} = {hit_at_5/val_length}')
-    # logger.info(f'Evaluation Hits@10: {hit_at_10} / {val_length} = {hit_at_10/val_length}')
-    # logger.info(f'MRR@10: {mrr_at_10} / {val_length} = {mrr_at_10/val_length}')
+    logger.info(f'Validation accuracy:')
+    logger.info(f'Evaluation Accuracy: {hit_at_1} / {val_length} = {hit_at_1/val_length}')
+    logger.info(f'Evaluation Hits@5: {hit_at_5} / {val_length} = {hit_at_5/val_length}')
+    logger.info(f'Evaluation Hits@10: {hit_at_10} / {val_length} = {hit_at_10/val_length}')
+    logger.info(f'MRR@10: {mrr_at_10} / {val_length} = {mrr_at_10/val_length}')
 
     if args.base_data_dir_new or args.test_only:
-        hit_at_1, hit_at_5, hit_at_10, mrr_at_10 = validate(args, model, val_dataloader_new, restrict_decode_vocab)
+        hit_at_1, hit_at_5, hit_at_10, mrr_at_10 = validate(args, model, val_dataloader_new, restrict_decode_vocab, atomic_ids)
 
         logger.info(f'Evaluating on the new dataset')
         logger.info(f'Evaluation Accuracy: {hit_at_1} / {val_length_new} = {hit_at_1/val_length_new}')
@@ -831,7 +870,7 @@ def main():
         logger.info(f'Evaluation Hits@10: {hit_at_10} / {val_length_new} = {hit_at_10/val_length_new}')
         logger.info(f'MRR@10: {mrr_at_10} / {val_length_new} = {mrr_at_10/val_length_new}')
 
-    if args.test_only:
+    if args.test_only: 
         return
 
     if not args.validate_only:
@@ -848,13 +887,16 @@ def main():
             if args.get_subsampled_train_dataloader:
                 train_dataloader = get_subsampled_train_dataloader(old_docs_list, new_docs_list, train_data, train_data_new, 
                     generated_queries, generated_queries_new, tokenizer, doc_class, args.batch_size)
-            train(args, model, train_dataloader, optimizer, length, scheduler, i)
+            if args.ewc:
+                train(args, model, train_dataloader, optimizer, length, scheduler, i, precision_matrices, model_ewc_sd)
+            else:
+                train(args, model, train_dataloader, optimizer, length, scheduler, i)
 
             # logger.info(f'Train Accuracy: {correct_ratio_train}')
             # logger.info(f'Train Loss: {tr_loss}')
 
             # scheduler.step()
-            hit_at_1, hit_at_5, hit_at_10, mrr_at_10 = validate(args, model, val_dataloader, restrict_decode_vocab)
+            hit_at_1, hit_at_5, hit_at_10, mrr_at_10 = validate(args, model, val_dataloader, restrict_decode_vocab, atomic_ids)
 
             logger.info(f'Epoch: {i+1}')
             logger.info(f'Evaluation Accuracy: {hit_at_1} / {val_length} = {hit_at_1/val_length}')
@@ -867,7 +909,7 @@ def main():
                     'Hits@10': hit_at_10/val_length, 'MRR@10': mrr_at_10/val_length, "epoch": i+1})
 
             if args.base_data_dir_new:
-                hit_at_1, hit_at_5, hit_at_10, mrr_at_10 = validate(args, model, val_dataloader_new, restrict_decode_vocab)
+                hit_at_1, hit_at_5, hit_at_10, mrr_at_10 = validate(args, model, val_dataloader_new, restrict_decode_vocab, atomic_ids)
 
                 logger.info(f'Evaluating on the new dataset')
                 logger.info(f'Evaluation Accuracy: {hit_at_1} / {val_length_new} = {hit_at_1/val_length_new}')
