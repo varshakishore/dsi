@@ -15,6 +15,7 @@ import argparse
 import os
 import joblib
 from utils import *
+from lora import *
 from transformers import AdamW
 
 import wandb
@@ -251,6 +252,12 @@ def get_arguments():
         default=None,
         type=str,
         help="path to saved model",
+    )
+
+    parser.add_argument(
+        "--lora",
+        action="store_true",
+        help="whether or not using LORA for continue learning"
     )
 
     parser.add_argument(
@@ -594,7 +601,7 @@ def main():
     else:
         print('Model not supported')
         raise NotImplementedError
-    
+
     if args.semantic_id_path:
         semantic_id_map = joblib.load(args.semantic_id_path)
         # assuming that the file name is semantic_id_map_i where i is the number of digits
@@ -642,6 +649,21 @@ def main():
 
 
         model.load_state_dict(state_dict, strict=True)
+
+    # training with LoRA
+    if args.lora:
+        import pdb; pdb.set_trace()
+        config = LoRAConfig()
+        model = modify_with_lora(model, config)
+
+        print("Trainable parameters")
+        print(
+            [
+                p_name
+                for p_name in dict(model.named_parameters()).keys()
+                if re.fullmatch(config.trainable_param_names, p_name)
+            ]
+        )
 
     model.to(device)
 
