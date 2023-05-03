@@ -14,14 +14,14 @@ wandb_name="semantic_id_new_50_ewc"
 semantic_id_path="/home/vk352/dsi/data/semantic_id_map_30"
 
 # change this path to the model finetuned on new docs
-averaging_path='/home/vk352/dsi/string_dsi/semantic_id/finetune_new_ewc_epoch40'
+averaging_path="/home/cw862/dsi/string_dsi/lora_new/finetune_new_lora_50_epoch23"
 
 train_cmd="
-python dsi_model_string_v1.py \
+python dsi_model_string_c.py \
 --batch_size=$batch_size  --output_dir=$output_dir --logging_step=$logging_step --model_name='t5-base' \
 --semantic_id_path=$semantic_id_path --new_only --output_name=$output_name \
 --base_data_dir_new=$base_data_dir_new --initialize_model $model_path --validate_only --alpha 0.6 \
---averaging_path=$averaging_path"
+--averaging_path=$averaging_path --lora"
 # --freeze_base_model --initialize_model $model_path --semantic_id_path=$semantic_id_path --averaging_path=$averaging_path
 # --ewc
 echo $train_cmd
