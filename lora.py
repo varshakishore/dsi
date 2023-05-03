@@ -56,6 +56,29 @@ class LoRALinear(nn.Module):
             self.in_features, self.out_features, self.bias is not None, self.rank, self.scaling_rank
         )
 
+def load_lora_cp(transformer, lora_statedict, config):
+    # import pdb; pdb.set_trace()
+    def load_loralayer_weight(weight, multi_lora_a,multi_lora_b,lora_a,lora_b):
+        if config.lora_scaling_rank:
+            weight = weight * torch.matmul(multi_lora_b, multi_lora_a) / config.lora_scaling_rank
+        if config.lora_rank:
+            weight = weight + torch.matmul(lora_b, lora_a) / config.lora_rank
+        return weight
+
+    for m_name, module in dict(transformer.named_modules()).items():
+        if re.fullmatch(config.lora_modules, m_name):
+            for c_name, layer in dict(module.named_children()).items():
+                if re.fullmatch(config.lora_layers, c_name):
+                    namelist = [m_name, c_name]
+                    matrix_name = '.'.join(namelist)
+                    weight = lora_statedict[f'{matrix_name}.weight']
+                    multi_lora_a = lora_statedict[f'{matrix_name}.multi_lora_a']
+                    multi_lora_b = lora_statedict[f'{matrix_name}.multi_lora_b']
+                    lora_a = lora_statedict[f'{matrix_name}.lora_a']
+                    lora_b = lora_statedict[f'{matrix_name}.lora_b']
+                    lora_statedict[f'{matrix_name}.weight'] = load_loralayer_weight(weight, multi_lora_a,multi_lora_b,lora_a,lora_b)
+    return lora_statedict
+
 
 def modify_with_lora(transformer, config):
     for m_name, module in dict(transformer.named_modules()).items():
